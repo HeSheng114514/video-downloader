@@ -131,11 +131,12 @@ class SettingsDialog(tk.Toplevel):
         browser_box = ttk.Frame(f)
         self.cmb_browser = ttk.Combobox(browser_box, state="readonly",
                                         textvariable=self._v("cookies_from_browser", self.cfg.cookies_from_browser),
-                                        values=BROWSERS, width=18)
+                                        values=BROWSERS, width=16)
         self.cmb_browser.pack(side="left")
         self.cmb_browser.bind("<<ComboboxSelected>>", lambda e: self._check_browser())
         ttk.Button(browser_box, text="🍪 Cookie 助手", command=self._open_cookie_dialog).pack(side="left", padx=(8, 0))
-        r = self._row(f, r, "从浏览器读取 Cookie", browser_box)
+        ttk.Button(browser_box, text="✍ 手动填写 Cookie", command=self._open_manual_cookie).pack(side="left", padx=(6, 0))
+        r = self._row(f, r, "Cookie 来源", browser_box)
         self.lbl_browser_hint = ttk.Label(f, text="", style="Dim.TLabel", wraplength=440, justify="left")
         self.lbl_browser_hint.grid(row=r, column=1, sticky="w")
         r += 1
@@ -155,9 +156,10 @@ class SettingsDialog(tk.Toplevel):
                                                 variable=self._v("insecure", self.cfg.insecure)))
 
         tips = ("提示：抖音、快手、B站高清、YouTube 会员内容都需要登录 Cookie。\n"
+                "三种来源任选其一：① ✍ 手动粘贴（最直接，推荐）② cookies.txt 文件 ③ 浏览器读取。\n"
                 "⚠ Windows 上 Chrome / Edge 自 127 版起启用 App-Bound 加密，"
-                "yt-dlp 无法解密其 Cookie（官方已知限制）—— 请使用 Firefox，"
-                "或用扩展导出 cookies.txt。点上方「🍪 Cookie 助手」可一键处理。")
+                "yt-dlp 无法解密其 Cookie（官方已知限制）—— 请勿选 chrome / edge，"
+                "用「🍪 Cookie 助手」或「✍ 手动填写 Cookie」。")
         ttk.Label(f, text=tips, style="Dim.TLabel", wraplength=470, justify="left").grid(
             row=r, column=0, columnspan=2, sticky="w", pady=(12, 0))
         self._check_browser()
@@ -196,15 +198,22 @@ class SettingsDialog(tk.Toplevel):
 
         if not hasattr(self, "lbl_browser_hint"):
             return
+        manual = getattr(self.cfg, "manual_cookies", None) or {}
         b = str(self._vars.get("cookies_from_browser").get() if "cookies_from_browser" in self._vars else "").strip()
-        if not b:
+        if manual:
+            self.lbl_browser_hint.configure(
+                text=f"✔ 已使用手动填写的 Cookie（{ck.manual_cookie_summary(manual)}），"
+                     f"优先级高于浏览器读取，不会触发 App-Bound 问题",
+                foreground=self.colors.get("success"))
+        elif not b:
             self.lbl_browser_hint.configure(
                 text="抖音、B站高清、YouTube 会员等需要登录态时使用（浏览器须已登录）",
                 foreground=self.colors.get("text_dim"))
         elif b in ck.CHROMIUM_BROWSERS and ck.appbound_risk()[0]:
             self.lbl_browser_hint.configure(
                 text="⚠ 该浏览器受 App-Bound 加密限制，Cookie 无法被读取，"
-                     "下载会报「Failed to decrypt with DPAPI」。请改用 Firefox 或 cookies.txt。",
+                     "下载会报「Failed to decrypt with DPAPI」。请改用 Firefox、cookies.txt，"
+                     "或点「✍ 手动填写 Cookie」。",
                 foreground=self.colors.get("error"))
         elif b == "firefox":
             profs = [p for p in ck.find_firefox_profiles() if p["exists"]]
@@ -214,6 +223,21 @@ class SettingsDialog(tk.Toplevel):
                 foreground=self.colors.get("success") if profs else self.colors.get("warn"))
         else:
             self.lbl_browser_hint.configure(text="", foreground=self.colors.get("text_dim"))
+
+    def _open_manual_cookie(self) -> None:
+        from .manual_cookie_dialog import ManualCookieDialog
+
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        dlg = ManualCookieDialog(self, on_saved=self._check_browser)
+        self.wait_window(dlg)
+        try:
+            self.grab_set()
+        except Exception:
+            pass
+        self._check_browser()
 
     def _open_cookie_dialog(self) -> None:
         from .cookie_dialog import CookieDialog

@@ -67,25 +67,32 @@ class CookieDialog(tk.Toplevel):
 
         r1 = ttk.Frame(plans)
         r1.pack(fill="x", pady=(0, 6))
-        ttk.Label(r1, text="方案 1 · 使用 Firefox", width=20).pack(side="left")
-        self.btn_ff = ttk.Button(r1, text="一键切换到 Firefox", command=self._use_firefox)
-        self.btn_ff.pack(side="left")
-        ttk.Label(r1, text="Firefox 的 Cookie 未加密，可直接读取（推荐）",
+        ttk.Label(r1, text="方案 1 · 手动填写 Cookie", width=24).pack(side="left")
+        ttk.Button(r1, text="✍ 手动粘贴", command=self._manual).pack(side="left")
+        ttk.Label(r1, text="从 F12 请求头复制 Cookie 一行即可，不用装扩展（最直接）",
                   style="Dim.TLabel").pack(side="left", padx=8)
 
         r2 = ttk.Frame(plans)
         r2.pack(fill="x", pady=(0, 6))
-        ttk.Label(r2, text="方案 2 · cookies.txt", width=20).pack(side="left")
-        ttk.Button(r2, text="选择 cookies.txt…", command=self._pick_file).pack(side="left")
-        ttk.Button(r2, text="获取导出扩展", command=lambda: webbrowser.open(EXT_URL)).pack(side="left", padx=6)
-        ttk.Label(r2, text="用扩展导出后选择该文件，兼容性最好",
+        ttk.Label(r2, text="方案 2 · 使用 Firefox", width=24).pack(side="left")
+        self.btn_ff = ttk.Button(r2, text="一键切换到 Firefox", command=self._use_firefox)
+        self.btn_ff.pack(side="left")
+        ttk.Label(r2, text="Firefox 的 Cookie 未加密，可直接读取",
                   style="Dim.TLabel").pack(side="left", padx=8)
 
         r3 = ttk.Frame(plans)
-        r3.pack(fill="x")
-        ttk.Label(r3, text="方案 3 · 检查现状", width=20).pack(side="left")
-        ttk.Button(r3, text="校验当前 Cookie 配置", command=self._validate).pack(side="left")
-        ttk.Button(r3, text="查看官方说明", command=lambda: webbrowser.open(ISSUE_URL)).pack(side="left", padx=6)
+        r3.pack(fill="x", pady=(0, 6))
+        ttk.Label(r3, text="方案 3 · cookies.txt", width=24).pack(side="left")
+        ttk.Button(r3, text="选择 cookies.txt…", command=self._pick_file).pack(side="left")
+        ttk.Button(r3, text="获取导出扩展", command=lambda: webbrowser.open(EXT_URL)).pack(side="left", padx=6)
+        ttk.Label(r3, text="用扩展导出后选择该文件，兼容性最好",
+                  style="Dim.TLabel").pack(side="left", padx=8)
+
+        r4 = ttk.Frame(plans)
+        r4.pack(fill="x")
+        ttk.Label(r4, text="方案 4 · 检查现状", width=24).pack(side="left")
+        ttk.Button(r4, text="校验当前 Cookie 配置", command=self._validate).pack(side="left")
+        ttk.Button(r4, text="查看官方说明", command=lambda: webbrowser.open(ISSUE_URL)).pack(side="left", padx=6)
 
         if not d["firefox_ok"]:
             self.btn_ff.configure(state="disabled")
@@ -102,13 +109,13 @@ class CookieDialog(tk.Toplevel):
         ttk.Button(bar, text="应用并保存", style="Accent.TButton",
                    command=self._save).pack(side="right", padx=6)
 
-        self._log("提示：方案 1 与方案 2 任选其一即可。")
+        self._log("提示：方案 1 ~ 3 任选其一即可，方案 1（手动粘贴）不需要安装任何东西。")
         self._log(f"当前配置：{self._current_desc()}")
         if d["appbound_risk"] and not d["firefox_ok"]:
-            self._log("⚠ 检测到 Chromium 系浏览器且没有 Firefox —— 请使用方案 2（cookies.txt），"
-                      "或在 Chrome / Edge 之外安装 Firefox 后使用方案 1。")
+            self._log("⚠ 检测到 Chromium 系浏览器且没有 Firefox —— 推荐方案 1（手动粘贴 Cookie）"
+                      "或方案 3（cookies.txt）。")
         elif d["appbound_risk"]:
-            self._log("✔ 可以使用方案 1：一键切换到 Firefox 读取登录态。")
+            self._log("✔ 可用方案 1（手动粘贴）或方案 2（Firefox）。")
 
         self.update_idletasks()
 
@@ -126,6 +133,9 @@ class CookieDialog(tk.Toplevel):
         self.out.configure(state="disabled")
 
     def _current_desc(self) -> str:
+        manual = getattr(self.cfg, "manual_cookies", None) or {}
+        if manual:
+            return f"手动填写（{ck.manual_cookie_summary(manual)}）"
         if self.cfg.cookies_file.strip():
             p = Path(self.cfg.cookies_file)
             return f"cookies.txt：{p.name}（{'存在' if p.is_file() else '文件不存在'}）"
@@ -136,6 +146,24 @@ class CookieDialog(tk.Toplevel):
         return "未配置（仅能下载公开内容，画质可能受限）"
 
     # ------------------------------------------------------------ 动作
+    def _manual(self) -> None:
+        from .manual_cookie_dialog import ManualCookieDialog
+
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        dlg = ManualCookieDialog(self, on_saved=self._on_manual_saved)
+        self.wait_window(dlg)
+        try:
+            self.grab_set()
+        except Exception:
+            pass
+
+    def _on_manual_saved(self) -> None:
+        self.cfg = ConfigStore.get()
+        self._log("✔ 手动 Cookie 已保存: " + ck.manual_cookie_summary(self.cfg.manual_cookies or {}))
+
     def _use_firefox(self) -> None:
         profs = ck.find_firefox_profiles()
         ok = [p for p in profs if p["exists"]]

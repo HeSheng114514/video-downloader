@@ -18,7 +18,7 @@ import re
 import urllib.parse
 from pathlib import Path
 
-from ..cookies import read_cookie_header
+from ..cookies import effective_cookie_header
 from ..models import MediaInfo
 from ..platforms import detect_platform, extract_kuaishou_id
 from .base import BaseEngine, EngineContext, EngineError
@@ -73,7 +73,7 @@ class KuaishouEngine(BaseEngine):
         if not photo_id:
             raise EngineError("无法识别快手作品 ID（支持 v.kuaishou.com 短链与 kuaishou.com/short-video/xxx）")
 
-        cookie = read_cookie_header(ctx.config.cookies_file, "kuaishou")
+        cookie = effective_cookie_header(ctx.config, "kuaishou")
         errors: list[str] = []
         for name, fetch in (
             ("移动分享页", self._mobile_page),

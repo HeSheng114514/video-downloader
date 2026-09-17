@@ -71,6 +71,191 @@ EXPECTED_COOKIES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "twitter": (("twitter.com", "x.com"), ("auth_token", "ct0")),
 }
 
+# 手动 Cookie 的默认写入域名（带前导点以匹配子域）
+PLATFORM_DOMAINS: dict[str, str] = {
+    "bilibili": ".bilibili.com",
+    "douyin": ".douyin.com",
+    "kuaishou": ".kuaishou.com",
+    "youtube": ".youtube.com",
+    "tiktok": ".tiktok.com",
+    "xiaohongshu": ".xiaohongshu.com",
+    "weibo": ".weibo.com",
+    "twitter": ".x.com",
+}
+
+MANUAL_COOKIE_FILE = "manual_cookies.txt"
+
+
+# ------------------------------------------------------------------ 手动 Cookie
+
+def parse_cookie_string(text: str) -> dict[str, str]:
+    """把用户粘贴的内容解析成 {name: value}。
+
+    支持多种来源格式：
+
+    * DevTools → Network → 请求头里的 ``Cookie: a=b; c=d``
+    * ``document.cookie`` 形式的 ``a=b; c=d``
+    * 每行一个 ``name=value``
+    * 整段「Copy as cURL」，会自动提取其中的 Cookie 部分
+    """
+    if not text:
+        return {}
+    raw = text.strip()
+
+    # 从 cURL / 请求头中提取 Cookie 段
+    m = re.search(r"(?im)^\s*(?:-H\s+)?['\"]?cookie\s*:\s*(.+?)(?:['\"]?\s*\\?\s*$)", raw, re.M)
+    if m:
+        raw = m.group(1)
+    else:
+        m2 = re.search(r"(?is)\bcookie\s*:\s*(.+)", raw)
+        if m2 and "\n" not in m2.group(1).strip():
+            raw = m2.group(1)
+
+    raw = raw.replace("\\\n", " ").replace("\\r", " ").replace("\\n", " ")
+    pairs: dict[str, str] = {}
+    for chunk in re.split(r"[;\n\r]+", raw):
+        item = chunk.strip().strip("'\"")
+        if not item or "=" not in item:
+            continue
+        name, _, value = item.partition("=")
+        name = name.strip().strip("'\"")
+        value = value.strip().strip("'\"")
+        if not name or name.lower() in ("cookie", "path", "domain", "expires", "max-age",
+                                        "secure", "httponly", "samesite"):
+            continue
+        pairs[name] = value
+    return pairs
+
+
+def guess_platform(cookie_names) -> str | None:
+    """根据 Cookie 名称猜测所属站点。"""
+    names = set(cookie_names)
+    best: tuple[int, str] | None = None
+    for platform, (_domains, keys) in EXPECTED_COOKIES.items():
+        hit = len(names & set(keys))
+        if hit and (best is None or hit > best[0]):
+            best = (hit, platform)
+    return best[1] if best else None
+
+
+def format_cookie_string(pairs: dict[str, str]) -> str:
+    return "; ".join(f"{k}={v}" for k, v in pairs.items())
+
+
+def write_netscape(path: str | Path, entries: dict[str, str]) -> int:
+    """把 {域名: "a=b; c=d"} 写成 Netscape 格式 cookies.txt，返回写入条数。
+
+    选用该格式是因为 yt-dlp 与程序内自研引擎（抖音/快手）都直接支持，
+    等价于用户手工导出的 cookies.txt，兼容性最好。
+    """
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["# Netscape HTTP Cookie File",
+             "# 由视频下载器根据「手动填写 Cookie」自动生成，请勿手工编辑",
+             ""]
+    count = 0
+    expiry = 4102444800  # 2100-01-01
+    for domain, cookie_str in (entries or {}).items():
+        dom = (domain or "").strip()
+        if not dom:
+            continue
+        if not dom.startswith("."):
+            dom = "." + dom
+        pairs = parse_cookie_string(cookie_str)
+        for name, value in pairs.items():
+            if not name:
+                continue
+            lines.append("\t".join([dom, "TRUE", "/", "TRUE", str(expiry), name, value]))
+            count += 1
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return count
+
+
+def manual_cookie_file_path(tmp_dir: str | Path) -> Path:
+    return Path(tmp_dir) / MANUAL_COOKIE_FILE
+
+
+def effective_cookie_header(cfg, domain_hint: str = "") -> str:
+    """取得用于自研引擎（抖音/快手）请求的 Cookie 头。
+
+    优先级：手动填写的 Cookie > cookies.txt 文件
+    """
+    manual = getattr(cfg, "manual_cookies", None) or {}
+    if isinstance(manual, dict):
+        merged: dict[str, str] = {}
+        for domain, cookie_str in manual.items():
+            if domain_hint and domain_hint not in domain:
+                continue
+            merged.update(parse_cookie_string(cookie_str))
+        if merged:
+            return format_cookie_string(merged)
+    return read_cookie_header(getattr(cfg, "cookies_file", ""), domain_hint)
+
+
+def manual_cookie_summary(manual: dict) -> str:
+    """给界面用的一句话摘要。"""
+    if not manual:
+        return "未填写"
+    total = sum(len(parse_cookie_string(v)) for v in manual.values())
+    return f"{len(manual)} 个域名 / 共 {total} 条 Cookie"
+
+
+# ------------------------------------------------------------------ 有效性校验
+
+def platform_from_domain(domain: str) -> str | None:
+    """根据域名反查站点标识。"""
+    dom = (domain or "").lstrip(".").lower()
+    if not dom:
+        return None
+    for platform, (domains, _keys) in EXPECTED_COOKIES.items():
+        for d in domains:
+            if dom == d or dom.endswith("." + d) or d.endswith("." + dom):
+                return platform
+    return None
+
+
+def check_cookie_validity(platform: str, cookie_str: str, client) -> tuple[bool | None, str]:
+    """联网校验 Cookie 是否仍然有效（登录态）。
+
+    过期或错误的 Cookie 会导致站点降级响应（例如 B 站只给 480P），
+    比不传 Cookie 还差，因此保存前校验很有必要。
+
+    返回 (是否有效 | None 表示无法判断, 说明文字)
+    """
+    pairs = parse_cookie_string(cookie_str)
+    if not pairs:
+        return False, "没有可用的 Cookie"
+
+    if platform == "bilibili" or "SESSDATA" in pairs:
+        try:
+            resp = client.get("https://api.bilibili.com/x/web-interface/nav",
+                              headers={"Cookie": format_cookie_string(pairs),
+                                       "Referer": "https://www.bilibili.com/"},
+                              timeout=15)
+            data = resp.json()
+            d = data.get("data") or {}
+            if data.get("code") == 0 and d.get("isLogin"):
+                return True, f"登录有效：{d.get('uname') or '已登录'}（UID {d.get('mid')}）"
+            return False, "Cookie 无效或已过期（B 站返回未登录），请重新登录后复制"
+        except Exception as e:
+            return None, f"无法校验（{type(e).__name__}）"
+
+    if platform == "youtube" or any(k in pairs for k in ("SAPISID", "__Secure-1PSID", "SID")):
+        try:
+            resp = client.get("https://www.youtube.com/",
+                              headers={"Cookie": format_cookie_string(pairs)},
+                              timeout=20)
+            text = resp.text
+            if '"LOGGED_IN":true' in text or "LOGGED_IN: true" in text:
+                return True, "登录有效（YouTube 已识别登录态）"
+            if '"LOGGED_IN":false' in text or "LOGGED_IN: false" in text:
+                return False, "Cookie 无效或已过期（YouTube 显示未登录）"
+            return None, "无法判断（页面未包含登录标识）"
+        except Exception as e:
+            return None, f"无法校验（{type(e).__name__}）"
+
+    return None, "该站点暂不支持自动校验，若下载异常请重新登录后复制 Cookie"
+
 
 # ------------------------------------------------------------------ 浏览器检测
 

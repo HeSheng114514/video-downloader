@@ -23,7 +23,7 @@ import re
 import urllib.parse
 from pathlib import Path
 
-from ..cookies import read_cookie_header
+from ..cookies import effective_cookie_header
 from ..models import MediaInfo
 from ..platforms import detect_platform, extract_douyin_id
 from .base import BaseEngine, EngineContext, EngineError
@@ -73,7 +73,7 @@ class DouyinEngine(BaseEngine):
         if not video_id:
             raise EngineError("无法从链接中识别抖音视频 ID（支持 v.douyin.com 短链与 douyin.com/video/xxx）")
 
-        cookie = read_cookie_header(ctx.config.cookies_file, "douyin")
+        cookie = effective_cookie_header(ctx.config, "douyin")
         errors: list[str] = []
         for name, fetch in (
             ("IES 移动接口", self._api_ies_mobile),

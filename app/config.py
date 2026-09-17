@@ -63,6 +63,7 @@ class Config:
     proxy: str = ""                    # http://127.0.0.1:7890
     cookies_from_browser: str = ""     # chrome / edge / firefox ...
     cookies_file: str = ""             # cookies.txt
+    manual_cookies: dict = field(default_factory=dict)   # {域名: "a=b; c=d"} 手动填写的 Cookie
     user_agent: str = ""               # 留空使用默认
     insecure: bool = False             # 忽略 SSL 证书错误
 
@@ -103,6 +104,11 @@ class Config:
                 setattr(cfg, name, 2)
         if cfg.quality not in QUALITY_KEYS:
             cfg.quality = "best"
+        # manual_cookies 必须是 {域名: cookie 字符串}
+        if not isinstance(cfg.manual_cookies, dict):
+            cfg.manual_cookies = {}
+        else:
+            cfg.manual_cookies = {str(k): str(v) for k, v in cfg.manual_cookies.items() if k and v}
         return cfg
 
     def save(self, path: Path | None = None) -> None:

@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from .. import bootstrap, paths
+from .. import cookies as ck
 from ..models import MediaInfo
 from ..platforms import detect_platform
 from ..utils import popen_kwargs
@@ -116,10 +117,7 @@ class YtDlpEngine(BaseEngine):
         if cfg.user_agent.strip():
             args += ["--user-agent", cfg.user_agent.strip()]
         if use_cookies:
-            if cfg.cookies_file.strip() and Path(cfg.cookies_file).is_file():
-                args += ["--cookies", cfg.cookies_file.strip()]
-            elif cfg.cookies_from_browser.strip():
-                args += ["--cookies-from-browser", cfg.cookies_from_browser.strip()]
+            args += self._cookie_args(ctx)
         if cfg.speed_limit.strip():
             args += ["--limit-rate", cfg.speed_limit.strip()]
         ff = paths.find_ffmpeg()
@@ -135,6 +133,30 @@ class YtDlpEngine(BaseEngine):
             except Exception:
                 args += cfg.extra_ytdlp_args.split()
         return args
+
+    def _cookie_args(self, ctx: EngineContext) -> list[str]:
+        """Cookie 参数，优先级：手动填写 > cookies.txt 文件 > 浏览器读取。
+
+        手动填写的内容会先转成 Netscape 格式的临时 cookies.txt —— 这样与用户
+        自己导出的文件完全等价，兼容性最好，也能同时被自研引擎（抖音/快手）复用。
+        """
+        cfg = ctx.config
+        manual = getattr(cfg, "manual_cookies", None) or {}
+        if isinstance(manual, dict) and manual:
+            path = ck.manual_cookie_file_path(paths.temp_dir())
+            try:
+                count = ck.write_netscape(path, manual)
+            except Exception as e:
+                count = 0
+                ctx.log(f"⚠ 手动 Cookie 写入失败：{type(e).__name__} {e}")
+            if count:
+                ctx.log(f"使用手动填写的 Cookie（{len(manual)} 个域名 / {count} 条）")
+                return ["--cookies", str(path)]
+        if cfg.cookies_file.strip() and Path(cfg.cookies_file).is_file():
+            return ["--cookies", cfg.cookies_file.strip()]
+        if cfg.cookies_from_browser.strip():
+            return ["--cookies-from-browser", cfg.cookies_from_browser.strip()]
+        return []
 
     def _format_args(self, ctx: EngineContext) -> list[str]:
         cfg = ctx.config

@@ -111,6 +111,27 @@ def download_cli(args: argparse.Namespace) -> int:
         cfg.cookies_from_browser = args.cookies_from_browser
     if args.cookies:
         cfg.cookies_file = args.cookies
+    if args.cookie_string:
+        from . import cookies as ck
+
+        pairs = ck.parse_cookie_string(args.cookie_string)
+        if not pairs:
+            print("无法从 --cookie-string 解析出 Cookie，请检查格式（如 SESSDATA=xxx; bili_jct=yyy）")
+            return 2
+        domain = (args.cookie_domain or "").strip()
+        if not domain:
+            guessed = ck.guess_platform(pairs)
+            domain = ck.PLATFORM_DOMAINS.get(guessed or "", "")
+        if not domain:
+            print("无法自动识别域名，请用 --cookie-domain 指定（如 --cookie-domain .bilibili.com）")
+            return 2
+        if not domain.startswith("."):
+            domain = "." + domain
+        cfg.manual_cookies = {domain: ck.format_cookie_string(pairs)}
+        cfg.cookies_file = ""
+        cfg.cookies_from_browser = ""
+        print(f"已应用手动 Cookie：{domain}　共 {len(pairs)} 条（"
+              + "、".join(list(pairs.keys())[:8]) + "）")
     if args.proxy:
         cfg.proxy = args.proxy
     if args.audio:
@@ -176,5 +197,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--proxy", help="代理，如 http://127.0.0.1:7890")
     p.add_argument("--cookies", help="cookies.txt 路径")
     p.add_argument("--cookies-from-browser", help="从浏览器读取 Cookie：chrome/edge/firefox")
+    p.add_argument("--cookie-string", help='手动 Cookie，如 "SESSDATA=xxx; bili_jct=yyy"')
+    p.add_argument("--cookie-domain", help="手动 Cookie 所属域名，留空按 Cookie 名自动识别")
     p.add_argument("--gui", action="store_true", help="强制启动图形界面")
     return p

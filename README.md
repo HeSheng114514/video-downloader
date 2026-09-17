@@ -121,9 +121,28 @@ dist\
 
 ## 四、Cookie 配置（重要）
 
-抖音、B站高清（1080P+）、YouTube 会员内容等需要登录态。
+抖音、B站高清（1080P+）、YouTube 会员内容等需要登录态。程序支持**三种 Cookie 来源**，
+任选其一即可（优先级：手动填写 > cookies.txt 文件 > 浏览器读取）。
 
-**方法 A：读取浏览器 Cookie（推荐 Firefox）**
+**方法 A：手动填写 Cookie（最直接，推荐）**
+
+不受 App-Bound 加密影响，也不需要安装任何扩展：
+
+1. 用浏览器登录目标网站（例如 B 站）
+2. 按 `F12` → **Network（网络）** → 刷新页面 → 点任意一个请求
+3. 在 **Request Headers（请求标头）** 里找到 `Cookie:` 那一行，**整行复制**
+4. 程序 → 🛠 设置 → 网络与登录 → **「✍ 手动填写 Cookie」**
+5. 粘贴 → 选择站点（会自动识别）→ 点「解析并保存」
+
+> ⚠ 不要用 console 里的 `document.cookie` —— 它取不到 HttpOnly 的关键 Cookie
+> （B 站 `SESSDATA`、抖音 `ttwid` 都是 HttpOnly），会导致登录态不生效。
+>
+> 💡 也支持直接粘贴整段「Copy as cURL」，程序会自动提取其中的 Cookie。
+>
+> ✅ 保存后会自动**联网校验登录态**（如 B 站会显示「登录有效：你的昵称（UID xxx）」）。
+> 过期的 Cookie 会让站点降级响应（B 站只给 480P），比不传还差，因此建议先校验。
+
+**方法 B：读取浏览器 Cookie（推荐 Firefox）**
 
 1. 用 **Firefox** 登录抖音 / B站 / YouTube 等站点
 2. 打开程序 → 🛠 设置 → 网络与登录 → 「从浏览器读取 Cookie」选择 `firefox`
@@ -131,15 +150,12 @@ dist\
 
 > Chrome / Edge 在 Windows 上因 App-Bound 加密**无法**被读取（见下节），
 > 选择它们时程序会给出警告并自动降级为无 Cookie 模式。
-> 不使用 Firefox 的用户请直接用方法 B。
 
-**方法 B：使用 cookies.txt**
+**方法 C：使用 cookies.txt**
 
 1. 浏览器安装扩展 `Get cookies.txt LOCALLY`
 2. 在目标网站页面导出 `cookies.txt`（选择「导出全部 Cookie」）
 3. 设置 → 网络与登录 → 选择该文件，点「校验当前 Cookie 配置」可确认是否真的包含登录态
-
-优先级：`cookies.txt` > 浏览器 Cookie。
 
 ### ⚠ Chrome / Edge 用户必读：App-Bound 加密
 
@@ -158,13 +174,14 @@ ERROR: Failed to decrypt with DPAPI
 
 1. **自动降级**：检测到该错误时自动去掉 Cookie 重新解析/下载，任务不会直接失败
    （公共视频仍可正常下载，画质可能受限），日志中给出明确原因与建议
-2. **🍪 Cookie 助手**：设置 → 网络与登录 → 「Cookie 助手」，一键诊断并处理
-   * 检测已安装浏览器与 Firefox 配置状态
+2. **🍪 Cookie 助手**：设置 → 网络与登录 → 「Cookie 助手」，提供四种方案
+   * **手动粘贴 Cookie**（最直接，不用装扩展）
    * 一键切换到 Firefox（其 Cookie 未加密，可直接读取）
    * 选择并**校验** cookies.txt（检查是否真的包含目标站点的关键登录 Cookie）
-   * 直达扩展安装页与官方说明
+   * 环境诊断 + 直达扩展安装页与官方说明
+3. **✍ 手动填写 Cookie**：独立入口，支持站点头像自动识别、联网校验登录态、多域名管理
 
-**结论**：Windows 上请使用 Firefox，或导出 cookies.txt。
+**结论**：Windows 上推荐「✍ 手动填写 Cookie」（最简单），或使用 Firefox / cookies.txt。
 
 ### 关于画质上限（为什么只有 720P / 960P）
 
@@ -181,6 +198,14 @@ ERROR: Failed to decrypt with DPAPI
 
 ### 更新日志
 
+* **v1.1.0**
+  * 新增：**✍ 手动填写 Cookie** —— 直接从 F12 请求头粘贴 Cookie，无需扩展、不受 App-Bound 限制
+    * 自动识别所属站点并填充域名（也支持粘贴整段「Copy as cURL」）
+    * **联网校验登录态**（B 站显示昵称与 UID，YouTube 检测登录标识），避免用过期的 Cookie 反而降画质
+    * 多域名管理：可分别保存/删除 B 站、抖音等各自的 Cookie，实时预览识别到的 Cookie 名单
+    * 运行时会自动转成标准 Netscape 格式供 yt-dlp 与自研引擎（抖音/快手）共用
+  * 新增：命令行 `--cookie-string "SESSDATA=xxx; bili_jct=yyy"` 与 `--cookie-domain`
+  * 调整：Cookie 优先级明确为「手动填写 > cookies.txt > 浏览器读取」，三者互斥避免混淆
 * **v1.0.1**
   * 修复：Chrome / Edge Cookie 读取失败（App-Bound 加密）不再导致任务直接失败，自动降级重试
   * 新增：🍪 Cookie 助手（环境诊断 / Firefox 一键切换 / cookies.txt 校验）

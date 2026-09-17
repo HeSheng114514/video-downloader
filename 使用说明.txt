@@ -44,16 +44,31 @@
 
 【四、抖音 / 快手 需要登录 Cookie（重要）】
 
-  这两个平台启用了风控，匿名请求会被拦截。解决方法：
+  这两个平台启用了风控，匿名请求会被拦截。三种方式任选其一：
 
-    方法 A（推荐）：用 Firefox 登录抖音/快手/B站等站点，
-            打开程序 → 🛠 设置 → 网络与登录 →
+    方法 A（最直接，推荐）：手动填写 Cookie
+        1. 用浏览器登录目标网站（如 B 站）
+        2. 按 F12 → Network（网络）→ 刷新页面 → 点任意一个请求
+        3. 在 Request Headers 里找到 Cookie: 那一行，整行复制
+        4. 程序 → 设置 → 网络与登录 →「✍ 手动填写 Cookie」
+        5. 粘贴 → 选站点（会自动识别）→ 点「解析并保存」
+
+        提示：
+          · 不要用 console 里的 document.cookie，它取不到 HttpOnly 的
+            关键 Cookie（B站 SESSDATA、抖音 ttwid），登录态会不生效
+          · 也支持直接粘贴整段「Copy as cURL」，程序会自动提取
+          · 保存后会自动联网校验登录态（B站会显示昵称和 UID）
+            过期的 Cookie 会让画质反而变差，建议先校验
+
+    方法 B：用 Firefox 登录抖音/快手/B站等站点，
+            打开程序 → 设置 → 网络与登录 →
             「从浏览器读取 Cookie」选择 firefox → 保存
 
-    方法 B：浏览器安装扩展 "Get cookies.txt LOCALLY"，
+    方法 C：浏览器安装扩展 "Get cookies.txt LOCALLY"，
             在目标网站导出 cookies.txt（选"导出全部 Cookie"），
             然后在设置中选择该文件
 
+  优先级：手动填写 > cookies.txt 文件 > 浏览器读取（三者互斥，避免混淆）
   哔哩哔哩 1080P 以上、YouTube 会员内容 同样建议配置 Cookie。
 
   ★★ Chrome / Edge 用户必读 ★★
@@ -69,7 +84,8 @@
       1. 自动降级 —— 检测到该错误会自动去掉 Cookie 重试，
          公共视频仍能下载，任务不会直接失败（画质可能受限）
       2. 🍪 Cookie 助手 —— 设置 → 网络与登录 →「Cookie 助手」，
-         可一键诊断、切换到 Firefox、校验 cookies.txt 是否正确
+         提供四种方案：手动粘贴 / Firefox 一键切换 / 校验 cookies.txt / 环境诊断
+      3. ✍ 手动填写 Cookie —— 完全绕开该限制，不需要装任何扩展
 
   ★ 为什么只有 720P / 960P？
 

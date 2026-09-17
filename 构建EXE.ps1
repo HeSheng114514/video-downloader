@@ -95,6 +95,7 @@ $common = @(
     "--hidden-import", "app.ui.settings",
     "--hidden-import", "app.ui.env_dialog",
     "--hidden-import", "app.ui.cookie_dialog",
+    "--hidden-import", "app.ui.manual_cookie_dialog",
     "--hidden-import", "app.engines.ytdlp",
     "--hidden-import", "app.engines.douyin",
     "--hidden-import", "app.engines.kuaishou",
