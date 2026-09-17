@@ -47,6 +47,14 @@ class EngineCancelled(EngineError):
     pass
 
 
+class CookieError(EngineError):
+    """读取浏览器 Cookie 失败（Windows 上多为 App-Bound 加密限制）。
+
+    引擎捕获后会自动改用「无 Cookie 模式」重试，避免整个任务直接失败。
+    """
+
+
+
 class BaseEngine:
     key = "base"
     name = "基础引擎"

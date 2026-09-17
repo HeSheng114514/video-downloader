@@ -123,22 +123,70 @@ dist\
 
 抖音、B站高清（1080P+）、YouTube 会员内容等需要登录态。
 
-**方法 A：读取浏览器 Cookie（推荐）**
+**方法 A：读取浏览器 Cookie（推荐 Firefox）**
 
-1. 用 Chrome / Edge 登录抖音（或 B站 / YouTube）
-2. 打开程序 → 🛠 设置 → 网络与登录 → 「从浏览器读取 Cookie」选择 `chrome` 或 `edge`
+1. 用 **Firefox** 登录抖音 / B站 / YouTube 等站点
+2. 打开程序 → 🛠 设置 → 网络与登录 → 「从浏览器读取 Cookie」选择 `firefox`
 3. 保存后重新解析
 
-> 注意：Chrome 在 Cookie 被其他程序占用时可能读取失败，此时请**完全退出浏览器**后重试，
-> 或改用方法 B。
+> Chrome / Edge 在 Windows 上因 App-Bound 加密**无法**被读取（见下节），
+> 选择它们时程序会给出警告并自动降级为无 Cookie 模式。
+> 不使用 Firefox 的用户请直接用方法 B。
 
 **方法 B：使用 cookies.txt**
 
 1. 浏览器安装扩展 `Get cookies.txt LOCALLY`
-2. 在目标网站页面导出 `cookies.txt`
-3. 设置 → 网络与登录 → 选择该文件
+2. 在目标网站页面导出 `cookies.txt`（选择「导出全部 Cookie」）
+3. 设置 → 网络与登录 → 选择该文件，点「校验当前 Cookie 配置」可确认是否真的包含登录态
 
 优先级：`cookies.txt` > 浏览器 Cookie。
+
+### ⚠ Chrome / Edge 用户必读：App-Bound 加密
+
+Windows 上 **Chrome / Edge 自 127 版起启用了 App-Bound 加密**，Cookie 解密密钥由浏览器
+进程独占保护，任何外部程序都无法用 DPAPI 解开，yt-dlp 会报：
+
+```
+ERROR: Failed to decrypt with DPAPI
+```
+
+这是**浏览器侧的安全机制，yt-dlp 官方明确表示无法绕过**
+（[yt-dlp#10927](https://github.com/yt-dlp/yt-dlp/issues/10927)，master 分支至今无相关实现），
+所以 `--cookies-from-browser chrome/edge` 在 Windows 上不可用。
+
+**本程序的处理方式**：
+
+1. **自动降级**：检测到该错误时自动去掉 Cookie 重新解析/下载，任务不会直接失败
+   （公共视频仍可正常下载，画质可能受限），日志中给出明确原因与建议
+2. **🍪 Cookie 助手**：设置 → 网络与登录 → 「Cookie 助手」，一键诊断并处理
+   * 检测已安装浏览器与 Firefox 配置状态
+   * 一键切换到 Firefox（其 Cookie 未加密，可直接读取）
+   * 选择并**校验** cookies.txt（检查是否真的包含目标站点的关键登录 Cookie）
+   * 直达扩展安装页与官方说明
+
+**结论**：Windows 上请使用 Firefox，或导出 cookies.txt。
+
+### 关于画质上限（为什么只有 720P / 960P）
+
+解析时日志会输出该视频的**全部可用画质**，例如：
+
+```
+可用画质：1080P / 720P / 480P / 360P（最高 1080P）
+ℹ 你选择的画质为 1080P，但此视频最高只有 720P；该视频可能需要登录才能解锁更高画质，可在「设置 → 网络与登录 → Cookie 助手」配置 Cookie 后重试
+```
+
+最高画质低于预期通常就是「未登录」导致的（B 站 1080P、抖音高清均需登录态），
+配置 Cookie 后重新解析即可。若日志显示的视频最高画质本就是 960P，说明该视频源本身
+只有这个清晰度（竖屏短视频常见），与登录无关。
+
+### 更新日志
+
+* **v1.0.1**
+  * 修复：Chrome / Edge Cookie 读取失败（App-Bound 加密）不再导致任务直接失败，自动降级重试
+  * 新增：🍪 Cookie 助手（环境诊断 / Firefox 一键切换 / cookies.txt 校验）
+  * 新增：解析时显示可用画质列表，并在画质低于所选档位时说明原因
+  * 优化：子进程输出编码自适应（UTF-8 / GBK），避免中文标题与路径乱码
+* **v1.0.0** 首个开源版本
 
 ---
 

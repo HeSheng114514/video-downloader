@@ -128,12 +128,16 @@ class SettingsDialog(tk.Toplevel):
                   style="Dim.TLabel").grid(row=r, column=1, sticky="w")
         r += 1
 
-        r = self._row(f, r, "从浏览器读取 Cookie",
-                      ttk.Combobox(f, state="readonly",
-                                   textvariable=self._v("cookies_from_browser", self.cfg.cookies_from_browser),
-                                   values=BROWSERS, width=18))
-        ttk.Label(f, text="抖音、B站高清、YouTube 会员等需要登录态时使用（浏览器须已登录）",
-                  style="Dim.TLabel", wraplength=380, justify="left").grid(row=r, column=1, sticky="w")
+        browser_box = ttk.Frame(f)
+        self.cmb_browser = ttk.Combobox(browser_box, state="readonly",
+                                        textvariable=self._v("cookies_from_browser", self.cfg.cookies_from_browser),
+                                        values=BROWSERS, width=18)
+        self.cmb_browser.pack(side="left")
+        self.cmb_browser.bind("<<ComboboxSelected>>", lambda e: self._check_browser())
+        ttk.Button(browser_box, text="🍪 Cookie 助手", command=self._open_cookie_dialog).pack(side="left", padx=(8, 0))
+        r = self._row(f, r, "从浏览器读取 Cookie", browser_box)
+        self.lbl_browser_hint = ttk.Label(f, text="", style="Dim.TLabel", wraplength=440, justify="left")
+        self.lbl_browser_hint.grid(row=r, column=1, sticky="w")
         r += 1
 
         cbox = ttk.Frame(f)
@@ -150,10 +154,13 @@ class SettingsDialog(tk.Toplevel):
         r = self._row(f, r, "", ttk.Checkbutton(f, text="忽略 SSL 证书错误（不推荐）",
                                                 variable=self._v("insecure", self.cfg.insecure)))
 
-        tips = ("提示：抖音（Douyin）当前需要登录 Cookie 才能解析；"
-                "在浏览器登录抖音后，选择 chrome / edge 即可自动读取。")
-        ttk.Label(f, text=tips, style="Dim.TLabel", wraplength=460, justify="left").grid(
+        tips = ("提示：抖音、快手、B站高清、YouTube 会员内容都需要登录 Cookie。\n"
+                "⚠ Windows 上 Chrome / Edge 自 127 版起启用 App-Bound 加密，"
+                "yt-dlp 无法解密其 Cookie（官方已知限制）—— 请使用 Firefox，"
+                "或用扩展导出 cookies.txt。点上方「🍪 Cookie 助手」可一键处理。")
+        ttk.Label(f, text=tips, style="Dim.TLabel", wraplength=470, justify="left").grid(
             row=r, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        self._check_browser()
 
     def _tab_advanced(self, nb: ttk.Notebook) -> None:
         f = self._page(nb, "高级")
@@ -183,6 +190,56 @@ class SettingsDialog(tk.Toplevel):
         return
 
     # ------------------------------------------------------------ 动作
+    def _check_browser(self) -> None:
+        """选择 Chromium 系浏览器时给出 App-Bound 加密警告。"""
+        from .. import cookies as ck
+
+        if not hasattr(self, "lbl_browser_hint"):
+            return
+        b = str(self._vars.get("cookies_from_browser").get() if "cookies_from_browser" in self._vars else "").strip()
+        if not b:
+            self.lbl_browser_hint.configure(
+                text="抖音、B站高清、YouTube 会员等需要登录态时使用（浏览器须已登录）",
+                foreground=self.colors.get("text_dim"))
+        elif b in ck.CHROMIUM_BROWSERS and ck.appbound_risk()[0]:
+            self.lbl_browser_hint.configure(
+                text="⚠ 该浏览器受 App-Bound 加密限制，Cookie 无法被读取，"
+                     "下载会报「Failed to decrypt with DPAPI」。请改用 Firefox 或 cookies.txt。",
+                foreground=self.colors.get("error"))
+        elif b == "firefox":
+            profs = [p for p in ck.find_firefox_profiles() if p["exists"]]
+            self.lbl_browser_hint.configure(
+                text=("✔ Firefox 可正常读取 Cookie（" + "、".join(p["name"] for p in profs) + "）"
+                      if profs else "⚠ 未检测到 Firefox 配置文件，请先在 Firefox 中登录目标网站"),
+                foreground=self.colors.get("success") if profs else self.colors.get("warn"))
+        else:
+            self.lbl_browser_hint.configure(text="", foreground=self.colors.get("text_dim"))
+
+    def _open_cookie_dialog(self) -> None:
+        from .cookie_dialog import CookieDialog
+
+        plats: list[str] = []
+        master = self.master
+        try:
+            for t in getattr(getattr(master, "manager", None), "tasks", []):
+                if t.platform not in plats:
+                    plats.append(t.platform)
+        except Exception:
+            pass
+        # 模态叠模态：先释放本窗口的 grab，关闭子窗口后再取回
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        dlg = CookieDialog(self, platforms=plats or ["bilibili", "douyin", "kuaishou"])
+        self.wait_window(dlg)
+        try:
+            self.grab_set()
+        except Exception:
+            pass
+        if hasattr(self, "lbl_browser_hint"):
+            self._check_browser()
+
     def _pick_dir(self, ent: ttk.Entry) -> None:
         d = filedialog.askdirectory(parent=self, initialdir=ent.get() or str(Path.home()))
         if d:

@@ -20,10 +20,50 @@ from .. import bootstrap, paths
 from ..models import MediaInfo
 from ..platforms import detect_platform
 from ..utils import popen_kwargs
-from .base import BaseEngine, EngineCancelled, EngineContext, EngineError
+from .base import BaseEngine, CookieError, EngineCancelled, EngineContext, EngineError
 
 RESULT_MARKER = "##FILE##"
 PROGRESS_MARKER = "##PROG##"
+
+# 浏览器 Cookie 读取失败的典型特征
+#   Chrome / Edge 127+ 起启用 App-Bound 加密，yt-dlp 无法用 DPAPI 解密
+#   官方说明：https://github.com/yt-dlp/yt-dlp/issues/10927
+DPAPI_MARKERS = ("dpapi", "could not be decrypted", "failed to decrypt")
+COOKIE_DB_MARKERS = ("unable to open the cookie database", "cookie database",
+                     "could not copy", "failed to open the cookie")
+COOKIE_FAIL_HINT = (
+    "浏览器 Cookie 读取失败：Chrome / Edge 127+ 启用了 App-Bound 加密，"
+    "yt-dlp 无法解密其 Cookie（官方已知限制，无法绕过）。"
+    "请在「设置 → 网络与登录 → Cookie 助手」中改用 Firefox，或导出 cookies.txt 后选择该文件"
+)
+
+
+def _is_cookie_failure(text: str) -> bool:
+    low = (text or "").lower()
+    return any(m in low for m in DPAPI_MARKERS) or any(m in low for m in COOKIE_DB_MARKERS)
+
+
+def _decode(raw: bytes) -> str:
+    """解码 yt-dlp 的输出。
+
+    正常情况下子进程按 UTF-8 输出（引擎已注入 PYTHONIOENCODING）；
+    但某些环境（如 exe 忽略该变量）会退回系统 ANSI 代码页，
+    此时按 GBK 再试一次，避免中文标题/路径变成乱码。
+    """
+    if not raw:
+        return ""
+    try:
+        text = raw.decode("utf-8")
+        if "\ufffd" not in text:
+            return text
+    except UnicodeDecodeError:
+        pass
+    for enc in ("gbk", "cp936", "big5"):
+        try:
+            return raw.decode(enc)
+        except Exception:
+            continue
+    return raw.decode("utf-8", "replace")
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
@@ -52,7 +92,7 @@ class YtDlpEngine(BaseEngine):
     def available(self) -> bool:
         return bootstrap.ytdlp_command() is not None
 
-    def _base_args(self, ctx: EngineContext) -> list[str]:
+    def _base_args(self, ctx: EngineContext, use_cookies: bool = True) -> list[str]:
         cfg = ctx.config
         cmd = bootstrap.ytdlp_command()
         if not cmd:
@@ -75,10 +115,11 @@ class YtDlpEngine(BaseEngine):
             args += ["--proxy", cfg.proxy.strip()]
         if cfg.user_agent.strip():
             args += ["--user-agent", cfg.user_agent.strip()]
-        if cfg.cookies_file.strip() and Path(cfg.cookies_file).is_file():
-            args += ["--cookies", cfg.cookies_file.strip()]
-        elif cfg.cookies_from_browser.strip():
-            args += ["--cookies-from-browser", cfg.cookies_from_browser.strip()]
+        if use_cookies:
+            if cfg.cookies_file.strip() and Path(cfg.cookies_file).is_file():
+                args += ["--cookies", cfg.cookies_file.strip()]
+            elif cfg.cookies_from_browser.strip():
+                args += ["--cookies-from-browser", cfg.cookies_from_browser.strip()]
         if cfg.speed_limit.strip():
             args += ["--limit-rate", cfg.speed_limit.strip()]
         ff = paths.find_ffmpeg()
@@ -130,11 +171,12 @@ class YtDlpEngine(BaseEngine):
             args += ["--embed-metadata"]
         return args
 
-    def _download_args(self, ctx: EngineContext, workdir: Path) -> list[str]:
+    def _download_args(self, ctx: EngineContext, workdir: Path,
+                       use_cookies: bool = True) -> list[str]:
         cfg = ctx.config
         outdir = Path(cfg.download_dir)
         result_file = workdir / "result.txt"
-        args = self._base_args(ctx) + self._format_args(ctx) + [
+        args = self._base_args(ctx, use_cookies) + self._format_args(ctx) + [
             "-o", str(outdir / (cfg.filename_template or "%(title).120B.%(ext)s")),
             "--no-simulate",
             "--progress",
@@ -155,9 +197,22 @@ class YtDlpEngine(BaseEngine):
 
     # ------------------------------------------------------------ 解析
     def probe(self, url: str, ctx: EngineContext) -> MediaInfo:
+        """解析链接。
+
+        若浏览器 Cookie 读取失败（App-Bound 加密），自动去掉 Cookie 重试一次，
+        保证公共视频仍能正常解析，而不是整个任务直接失败。
+        """
+        try:
+            return self._probe_once(url, ctx, use_cookies=True)
+        except CookieError as e:
+            ctx.log(f"⚠ {e}")
+            ctx.log("已自动改用「无 Cookie 模式」重新解析（画质可能受限）")
+            return self._probe_once(url, ctx, use_cookies=False)
+
+    def _probe_once(self, url: str, ctx: EngineContext, use_cookies: bool = True) -> MediaInfo:
         workdir = paths.make_temp_dir("probe_")
         try:
-            args = self._base_args(ctx) + [
+            args = self._base_args(ctx, use_cookies) + [
                 "-J", "--skip-download", "--no-playlist" if not ctx.config.playlist else "--yes-playlist",
             ]
             args.append(url)
@@ -165,13 +220,20 @@ class YtDlpEngine(BaseEngine):
             env = bootstrap.extra_env()
             proc = subprocess.run(args, capture_output=True, timeout=180,
                                   env=env, **popen_kwargs())
-            out = (proc.stdout or b"").decode("utf-8", "replace").strip()
+            out = _decode(proc.stdout or b"").strip()
+            err = _decode(proc.stderr or b"")
             if not out:
-                err = (proc.stderr or b"").decode("utf-8", "replace")
+                if use_cookies and _is_cookie_failure(err):
+                    raise CookieError(COOKIE_FAIL_HINT)
                 raise EngineError(self._friendly_error(err))
-            start = out.find("{")
-            data = json.loads(out[start:]) if start >= 0 else {}
-            return self._to_info(url, data)
+            data = json.loads(out[out.find("{"):]) if out.find("{") >= 0 else {}
+            info = self._to_info(url, data)
+            if use_cookies and _is_cookie_failure(err):
+                # 解析虽然成功（如公共视频），但要提醒用户 Cookie 其实没读进来
+                ctx.log("⚠ 浏览器 Cookie 未能读取（App-Bound 加密），本次未使用登录态；"
+                        "如需要高清或登录内容，请改用 cookies.txt 或 Firefox")
+            self._log_qualities(data, ctx)
+            return info
         except subprocess.TimeoutExpired:
             raise EngineError("解析超时，请检查网络或代理设置")
         except json.JSONDecodeError:
@@ -183,6 +245,30 @@ class YtDlpEngine(BaseEngine):
                 shutil.rmtree(workdir, ignore_errors=True)
             except Exception:
                 pass
+
+    @staticmethod
+    def _log_qualities(data: dict, ctx: EngineContext) -> None:
+        """把可用画质写进日志，便于判断画质上限（例如未登录 B 站只有 720P）。"""
+        formats = data.get("formats") or []
+        heights = sorted({int(f["height"]) for f in formats
+                          if isinstance(f, dict) and f.get("height")}, reverse=True)
+        if not heights:
+            entries = data.get("entries") or []
+            if entries and isinstance(entries[0], dict):
+                heights = sorted({int(f["height"]) for f in (entries[0].get("formats") or [])
+                                  if isinstance(f, dict) and f.get("height")}, reverse=True)
+        if not heights:
+            return
+        ctx.log("可用画质：" + " / ".join(f"{h}P" for h in heights[:10])
+                + f"（最高 {heights[0]}P）")
+        wanted = {"2160": 2160, "1440": 1440, "1080": 1080, "720": 720, "480": 480}.get(
+            ctx.config.quality or "")
+        if wanted and heights[0] < wanted:
+            has_cookie = bool(ctx.config.cookies_file.strip()
+                              or ctx.config.cookies_from_browser.strip())
+            hint = ("" if has_cookie else "；该视频可能需要登录才能解锁更高画质，"
+                                          "可在「设置 → 网络与登录 → Cookie 助手」配置 Cookie 后重试")
+            ctx.log(f"ℹ 你选择的画质为 {wanted}P，但此视频最高只有 {heights[0]}P{hint}")
 
     @staticmethod
     def _to_info(url: str, data: dict) -> MediaInfo:
@@ -221,8 +307,10 @@ class YtDlpEngine(BaseEngine):
     def _friendly_error(text: str) -> str:
         t = (text or "").strip().splitlines()
         msg = t[-1] if t else "未知错误"
+        if _is_cookie_failure(text):
+            return COOKIE_FAIL_HINT
         if "Fresh cookies" in text or "cookies" in text.lower() and "needed" in text.lower():
-            return "需要登录 Cookie：请在「设置 → 网络」中选择浏览器导入 Cookie（抖音/B站 高清必需）"
+            return "需要登录 Cookie：请在「设置 → 网络与登录 → Cookie 助手」中配置（抖音/B站高清必需）"
         if "Sign in to confirm" in text:
             return "YouTube 要求登录验证：请配置代理或导入 Cookie"
         if "Unable to download webpage" in text or "Connection" in text:
@@ -237,9 +325,23 @@ class YtDlpEngine(BaseEngine):
 
     # ------------------------------------------------------------ 下载
     def download(self, url: str, info: MediaInfo, ctx: EngineContext) -> Path:
+        """下载视频。
+
+        若浏览器 Cookie 读取失败，自动去掉 Cookie 重试，避免整个任务失败。
+        """
+        try:
+            return self._download_once(url, info, ctx, use_cookies=True)
+        except CookieError as e:
+            ctx.log(f"⚠ {e}")
+            ctx.log("已自动改用「无 Cookie 模式」重新下载（画质可能受限）")
+            ctx.on_status("下载中（无 Cookie）")
+            return self._download_once(url, info, ctx, use_cookies=False)
+
+    def _download_once(self, url: str, info: MediaInfo, ctx: EngineContext,
+                       use_cookies: bool = True) -> Path:
         workdir = paths.make_temp_dir("dl_")
         result_file = workdir / "result.txt"
-        args = self._download_args(ctx, workdir)
+        args = self._download_args(ctx, workdir, use_cookies)
         args.append(url)
 
         env = bootstrap.extra_env()
@@ -255,15 +357,19 @@ class YtDlpEngine(BaseEngine):
         ctx.on_proc(proc)
         ctx.on_status("下载中")
         last_err: list[str] = []
+        tail: list[str] = []          # 保留全部输出尾部，用于识别 Cookie 解密失败
         try:
             assert proc.stdout is not None
             for raw in iter(proc.stdout.readline, b""):
                 if ctx.cancelled():
                     _kill_tree(proc)
                     raise EngineCancelled("任务已取消")
-                line = raw.decode("utf-8", "replace").rstrip()
+                line = _decode(raw).rstrip()
                 if not line:
                     continue
+                tail.append(line)
+                if len(tail) > 120:
+                    del tail[:60]
                 self._handle_line(line, ctx, last_err)
             proc.wait()
         finally:
@@ -278,6 +384,8 @@ class YtDlpEngine(BaseEngine):
         if ctx.cancelled():
             raise EngineCancelled("任务已取消")
 
+        cookie_failed = use_cookies and _is_cookie_failure("\n".join(tail))
+
         # 结果文件优先（UTF-8 写入，避免控制台编码问题）
         final: Path | None = None
         try:
@@ -289,10 +397,16 @@ class YtDlpEngine(BaseEngine):
         except Exception:
             pass
         if final and final.exists():
+            if cookie_failed:
+                ctx.log("⚠ 浏览器 Cookie 未能读取（App-Bound 加密），本次未使用登录态；"
+                        "画质可能受限，建议改用 cookies.txt 或 Firefox")
             ctx.on_file(str(final))
             return final
         if proc.returncode != 0:
-            raise EngineError(self._friendly_error("\n".join(last_err[-6:])) or "下载失败")
+            combined = "\n".join(last_err[-6:]) or "\n".join(tail[-6:])
+            if cookie_failed:
+                raise CookieError(COOKIE_FAIL_HINT)
+            raise EngineError(self._friendly_error(combined) or "下载失败")
         found = self._guess_output(info, ctx)
         if found:
             ctx.on_file(str(found))

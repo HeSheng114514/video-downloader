@@ -23,6 +23,7 @@ import re
 import urllib.parse
 from pathlib import Path
 
+from ..cookies import read_cookie_header
 from ..models import MediaInfo
 from ..platforms import detect_platform, extract_douyin_id
 from .base import BaseEngine, EngineContext, EngineError
@@ -54,28 +55,6 @@ WEB_PARAMS = {
     "effective_type": "4g",
     "round_trip_time": "50",
 }
-
-
-def read_cookie_header(cookies_file: str, domain_hint: str = "douyin") -> str:
-    """把 Netscape 格式 cookies.txt 转成 Cookie 请求头（仅取相关域）。"""
-    path = Path(cookies_file or "")
-    if not path.is_file():
-        return ""
-    pairs: list[str] = []
-    try:
-        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split("\t")
-            if len(parts) < 7:
-                continue
-            domain, _, _, _, _, name, value = parts[:7]
-            if domain_hint and domain_hint not in domain:
-                continue
-            pairs.append(f"{name}={value}")
-    except Exception:
-        return ""
-    return "; ".join(pairs)
 
 
 class DouyinEngine(BaseEngine):

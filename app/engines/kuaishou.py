@@ -18,11 +18,11 @@ import re
 import urllib.parse
 from pathlib import Path
 
+from ..cookies import read_cookie_header
 from ..models import MediaInfo
 from ..platforms import detect_platform, extract_kuaishou_id
 from .base import BaseEngine, EngineContext, EngineError
 from .direct import download_direct
-from .douyin import read_cookie_header
 
 GRAPHQL_URL = "https://www.kuaishou.com/graphql"
 
