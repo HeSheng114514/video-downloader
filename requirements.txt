@@ -1,0 +1,16 @@
+# 视频下载器 —— 依赖说明
+#
+# 本项目刻意保持「零第三方依赖」：
+#   * 界面：tkinter（Python 标准库自带）
+#   * 网络：urllib（标准库）
+#   * 下载：yt-dlp 可执行文件，由程序首次运行时自动下载到 bin/ 目录
+#   * 合并：ffmpeg 可执行文件，由程序首次运行时自动下载到 bin/ 目录
+#
+# 因此本文件无需 pip install 任何包即可运行。
+#
+# 如需使用 yt-dlp 的 Python 模块模式（例如无法下载 exe 时），可执行：
+#   pip install yt-dlp -i https://mirrors.aliyun.com/pypi/simple/
+# 程序会自动识别 vendor/ 目录或系统已安装的 yt_dlp 模块。
+#
+# 打包 EXE 时需要 PyInstaller（由 构建EXE.ps1 自动安装）：
+#   pip install pyinstaller -i https://mirrors.aliyun.com/pypi/simple/
