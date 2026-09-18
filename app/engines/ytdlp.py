@@ -205,7 +205,9 @@ class YtDlpEngine(BaseEngine):
             "--progress-template", f"download:{PROGRESS_MARKER}%(progress)j",
             "--print-to-file", f"after_move:{RESULT_MARKER}%(filepath)s", str(result_file),
         ]
-        if not cfg.keep_original:
+        if not cfg.keep_original or ctx.overwrite:
+            # 用户明确要求覆盖（把同一链接再次下载）时，必须允许覆盖，
+            # 否则 yt-dlp 检测到同名文件已存在会直接跳过
             args += ["--force-overwrites"]
         if cfg.write_thumbnail:
             args += ["--write-thumbnail"]

@@ -54,6 +54,14 @@ class SettingsDialog(tk.Toplevel):
             pass
 
     # ------------------------------------------------------------ 控件助手
+    def _dup_label(self, value: str) -> str:
+        """配置值 → 界面标签。"""
+        for label, val in {"覆盖重新下载（替换原文件）": "overwrite",
+                           "跳过重复（保留原文件）": "skip"}.items():
+            if val == value:
+                return label
+        return "覆盖重新下载（替换原文件）"
+
     def _v(self, key: str, value) -> tk.Variable:
         var = tk.BooleanVar(value=value) if isinstance(value, bool) else tk.StringVar(value=str(value))
         self._vars[key] = var
@@ -96,8 +104,22 @@ class SettingsDialog(tk.Toplevel):
         r += 1
 
         r = self._row(f, r, "音频格式",
-                      ttk.Combobox(f, state="readonly", textvariable=self._v("audio_format", self.cfg.audio_format),
+                      ttk.Combobox(f, state="readonly",
+                                   textvariable=self._v("audio_format", self.cfg.audio_format),
                                    values=["mp3", "m4a", "flac", "wav", "opus"], width=18))
+
+        # 重复视频：覆盖 or 跳过
+        self._dup_map = {"覆盖重新下载（替换原文件）": "overwrite",
+                         "跳过重复（保留原文件）": "skip"}
+        r = self._row(f, r, "重复视频处理",
+                      ttk.Combobox(f, state="readonly", width=24,
+                                   textvariable=self._v(
+                                       "duplicate_action",
+                                       self._dup_label(self.cfg.duplicate_action)),
+                                   values=list(self._dup_map.keys())))
+        ttk.Label(f, text="列表中已有同一视频时：覆盖=强制重新下载；跳过=忽略不重新下载",
+                  style="Dim.TLabel").grid(row=r, column=1, sticky="w")
+        r += 1
 
         r = self._row(f, r, "合集下载项",
                       ttk.Entry(f, textvariable=self._v("playlist_items", self.cfg.playlist_items)))
@@ -285,6 +307,8 @@ class SettingsDialog(tk.Toplevel):
             val = getattr(default, key, None)
             if isinstance(var, tk.BooleanVar):
                 var.set(bool(val))
+            elif key == "duplicate_action":
+                var.set(self._dup_label(default.duplicate_action))
             else:
                 var.set("" if val is None else str(val))
 
@@ -293,6 +317,8 @@ class SettingsDialog(tk.Toplevel):
         for key, var in self._vars.items():
             if not hasattr(cfg, key):
                 continue
+            if key == "duplicate_action":
+                continue  # 界面显示的是中文标签，单独处理
             val = var.get()
             current = getattr(cfg, key)
             try:
@@ -304,6 +330,10 @@ class SettingsDialog(tk.Toplevel):
                     setattr(cfg, key, str(val).strip())
             except Exception:
                 pass
+        # 重复视频处理：中文标签 → 配置值
+        if "duplicate_action" in self._vars:
+            label = str(self._vars["duplicate_action"].get())
+            cfg.duplicate_action = self._dup_map.get(label, "overwrite")
         if not cfg.download_dir:
             cfg.download_dir = str(paths.default_download_dir())
         Path(cfg.download_dir).mkdir(parents=True, exist_ok=True)

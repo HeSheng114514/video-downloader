@@ -86,6 +86,21 @@ KS_ID_PATTERNS = [
 KS_SHORT = re.compile(r"https?://v\.kuaishou\.com/[A-Za-z0-9_\-]+", re.I)
 KS_LIVE_SHORT = re.compile(r"https?://(?:v\.)?kuaishou\.com/[A-Za-z0-9_\-]+", re.I)
 
+# 哔哩哔哩
+BILI_ID_PATTERNS = [
+    re.compile(r"bilibili\.com/video/(BV[0-9A-Za-z]{10})", re.I),
+    re.compile(r"bilibili\.com/video/av(\d+)", re.I),
+    re.compile(r"[?&]bvid=(BV[0-9A-Za-z]{10})", re.I),
+]
+BILI_SHORT = re.compile(r"https?://b23\.tv/[A-Za-z0-9]+", re.I)
+
+# YouTube
+YT_ID_PATTERNS = [
+    re.compile(r"youtu\.be/([A-Za-z0-9_\-]{6,})", re.I),
+    re.compile(r"[?&]v=([A-Za-z0-9_\-]{6,})", re.I),
+    re.compile(r"youtube\.com/(?:shorts|embed|live)/([A-Za-z0-9_\-]{6,})", re.I),
+]
+
 
 def domain_of(url: str) -> str:
     m = re.match(r"https?://([^/]+)", url or "", re.I)
@@ -123,7 +138,65 @@ def extract_kuaishou_id(url: str) -> str | None:
 
 
 def is_short_link(url: str) -> bool:
-    return bool(DY_SHORT.match(url) or KS_SHORT.match(url))
+    return bool(DY_SHORT.match(url) or KS_SHORT.match(url) or BILI_SHORT.match(url))
+
+
+def extract_bilibili_id(url: str) -> str | None:
+    for pat in BILI_ID_PATTERNS:
+        m = pat.search(url)
+        if m:
+            return m.group(1)
+    return None
+
+
+def extract_youtube_id(url: str) -> str | None:
+    for pat in YT_ID_PATTERNS:
+        m = pat.search(url)
+        if m:
+            return m.group(1)
+    return None
+
+
+def video_key(url: str) -> str:
+    """把同一视频的不同链接形式归一成同一个 key，用于「查重」。
+
+    例如下面三个链接会得到同一个 key::
+
+        https://www.bilibili.com/video/BV1GJ411x7h7
+        https://www.bilibili.com/video/BV1GJ411x7h7?spm_id_from=333.999
+        https://bilibili.com/video/BV1GJ411x7h7/
+
+    无法识别作品号时退化为「去掉查询参数与末尾斜杠的 URL」。
+    """
+    u = (url or "").strip()
+    if not u:
+        return ""
+    platform = detect_platform(u)
+    try:
+        if platform == "bilibili":
+            vid = extract_bilibili_id(u)
+            if vid:
+                return f"bilibili:{vid.lower()}"
+        elif platform == "douyin":
+            vid = extract_douyin_id(u)
+            if vid:
+                return f"douyin:{vid}"
+        elif platform == "kuaishou":
+            pid = extract_kuaishou_id(u)
+            if pid:
+                return f"kuaishou:{pid}"
+        elif platform == "youtube":
+            vid = extract_youtube_id(u)
+            if vid:
+                return f"youtube:{vid}"
+        elif platform == "tiktok":
+            m = re.search(r"/video/(\d{6,})", u)
+            if m:
+                return f"tiktok:{m.group(1)}"
+    except Exception:
+        pass
+    base = re.sub(r"[?#].*$", "", u).rstrip("/")
+    return (base or u).lower()
 
 
 SUPPORTED_HINT = "哔哩哔哩 · 抖音 · 快手 · TikTok · YouTube · 小红书 · 微博 · 西瓜视频 等 1000+ 站点"

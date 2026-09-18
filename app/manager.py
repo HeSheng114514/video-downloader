@@ -27,7 +27,7 @@ from .engines import engines_for, get_engine, normalize_url
 from .engines.base import EngineCancelled, EngineContext, EngineError
 from .models import DownloadTask, MediaInfo, TaskState
 from .net import shared_client
-from .platforms import detect_platform, platform_name
+from .platforms import detect_platform, platform_name, video_key
 from .utils import extract_urls, human_bytes
 
 EventCB = Callable[[str, dict], None]
@@ -85,24 +85,75 @@ class TaskManager:
                 self._job_event.set()
 
     # ------------------------------------------------------------ 任务管理
-    def add_urls(self, text: str | list[str], auto_parse: bool = True) -> list[DownloadTask]:
-        urls = extract_urls(text) if isinstance(text, str) else list(text)
+    def upsert_urls(
+        self,
+        urls: list[str],
+        auto_parse: bool = True,
+    ) -> tuple[list[DownloadTask], list[DownloadTask]]:
+        """按「视频」查重地加入链接，返回 ``(新增任务, 已存在任务)``。
+
+        * 同一个视频的不同链接形式（BV 号带参数、短链等）会被识别为同一任务
+        * 已存在的链接**不再静默丢弃**，而是随第二个返回值交给调用方决定
+          如何处理（覆盖下载 / 跳过），避免用户点击后毫无反应
+        """
         added: list[DownloadTask] = []
+        existing: list[DownloadTask] = []
         with self._lock:
-            existing = {t.url for t in self.tasks}
+            index: dict[str, DownloadTask] = {}
+            for t in self.tasks:
+                index.setdefault(t.key, t)
             for u in urls:
-                if u in existing:
+                key = video_key(u)
+                hit = index.get(key)
+                if hit is not None:
+                    if hit not in existing:
+                        existing.append(hit)
                     continue
                 task = DownloadTask(url=u, platform=detect_platform(u))
                 self.tasks.append(task)
+                index[key] = task
                 added.append(task)
         for task in added:
             self.emit("task_added", {"task": task})
             if auto_parse:
                 self.enqueue(task.id, "parse")
         if added:
-            self._log("info", f"已添加 {len(added)} 个任务")
+            self._log("info", f"已添加 {len(added)} 个新任务")
+        if existing:
+            self._log("info", f"检测到 {len(existing)} 个视频已在列表中")
+        return added, existing
+
+    def add_urls(self, text: str | list[str], auto_parse: bool = True) -> list[DownloadTask]:
+        """加入链接（重复的跳过），返回新增任务。"""
+        urls = extract_urls(text) if isinstance(text, str) else list(text)
+        added, _existing = self.upsert_urls(urls, auto_parse=auto_parse)
         return added
+
+    def restart(self, task_id: int, overwrite: bool = True) -> bool:
+        """把任务重置后重新下载（用于「覆盖下载」）。
+
+        返回是否成功入队；任务正在下载中时不打断，直接返回 False。
+        """
+        task = self.get(task_id)
+        if task is None:
+            return False
+        if task.state.is_active:
+            self._log("warn", f"[{task.id}] 正在下载中，跳过重复的下载请求")
+            return False
+        task.overwrite = overwrite
+        task.error = ""
+        task.progress = 0.0
+        task.downloaded = 0
+        task.total = 0
+        task.speed = 0.0
+        task.eta = 0.0
+        task.started_at = 0.0
+        task.finished_at = 0.0
+        if task.cancel_event is not None and hasattr(task.cancel_event, "clear"):
+            task.cancel_event.clear()  # type: ignore[union-attr]
+        self.emit("task_update", {"task": task})
+        self.enqueue(task_id, "download" if task.info is not None else "parse")
+        return True
 
     def get(self, task_id: int) -> DownloadTask | None:
         with self._lock:
@@ -171,6 +222,14 @@ class TaskManager:
             return
         task.error = ""
         task.retries += 1
+        # 已完成的任务再次「重新下载」时必须允许覆盖，
+        # 否则 yt-dlp 发现同名文件已存在会直接跳过（表现为点了没反应）
+        task.overwrite = task.state == TaskState.DONE
+        if task.state == TaskState.DONE:
+            task.progress = 0.0
+            task.downloaded = 0
+            task.finished_at = 0.0
+        self.emit("task_update", {"task": task})
         if task.info is None:
             self.enqueue(task_id, "parse")
         else:
@@ -215,6 +274,7 @@ class TaskManager:
             on_file=lambda p, _t=task: self._file(_t, p),
             on_proc=lambda p, _t=task: setattr(_t, "proc", p),
             cancel=cancel,
+            overwrite=task.overwrite,
         )
         return ctx
 

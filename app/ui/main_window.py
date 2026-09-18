@@ -400,7 +400,11 @@ class MainWindow(tk.Tk):
         except Exception:
             data = ""
         if data:
-            self.txt_urls.insert("end", ("\n" if self.txt_urls.get("1.0", "end").strip() else "") + data.strip())
+            # 逐条换行插入，避免多条链接粘成一行被当成一个 URL
+            urls = extract_urls(data)
+            new_text = "\n".join(urls) if urls else data.strip()
+            current = self.txt_urls.get("1.0", "end").strip()
+            self.txt_urls.insert("end", ("\n" if current else "") + new_text)
         self._on_parse()
 
     def _on_parse(self) -> None:
@@ -409,19 +413,62 @@ class MainWindow(tk.Tk):
         if not urls:
             self.lbl_status.configure(text="未识别到有效链接")
             return
+        added, existing = self.manager.upsert_urls(urls, auto_parse=True)
+        overwrite = self.cfg.duplicate_action != "skip"
+        refreshed = 0
+        if overwrite:
+            for t in existing:
+                if not t.state.is_active:
+                    self.manager.enqueue(t.id, "parse")
+                    refreshed += 1
+        if not added and not refreshed:
+            self.lbl_status.configure(
+                text=f"{len(existing)} 个视频已在列表中，已按设置跳过重复（输入框已保留；"
+                     f"可在「设置 → 下载」改为「覆盖重新下载」）")
+            return
+        # 只有确实提交了任务才清空输入框，避免「链接被清空却没任何反应」
         self.txt_urls.delete("1.0", "end")
-        self.manager.add_urls(urls, auto_parse=True)
-        self.lbl_status.configure(text=f"已提交 {len(urls)} 个链接进行解析")
+        parts = []
+        if added:
+            parts.append(f"新增 {len(added)} 个")
+        if refreshed:
+            parts.append(f"重新解析 {len(refreshed)} 个（已存在）")
+        self.lbl_status.configure(text="解析中：" + "，".join(parts))
 
     def _on_download(self) -> None:
         text = self.txt_urls.get("1.0", "end").strip()
         urls = extract_urls(text)
         if urls:
-            self.txt_urls.delete("1.0", "end")
-            added = self.manager.add_urls(urls, auto_parse=False)
+            added, existing = self.manager.upsert_urls(urls, auto_parse=False)
             for t in added:
                 self.manager.enqueue(t.id, "download")
-            self.lbl_status.configure(text=f"开始下载 {len(added)} 个新任务")
+            overwritten = 0
+            skipped = 0
+            if self.cfg.duplicate_action == "skip":
+                skipped = len(existing)
+            else:
+                # 已存在的视频按设置「覆盖下载」，而不是静默跳过
+                for t in existing:
+                    if self.manager.restart(t.id, overwrite=True):
+                        overwritten += 1
+            started = len(added) + overwritten
+            if not started:
+                if skipped:
+                    self.lbl_status.configure(
+                        text=f"{skipped} 个视频已在列表中，已按设置跳过（输入框已保留；"
+                             f"如需重新下载请在「设置 → 下载」改为「覆盖重新下载」）")
+                else:
+                    self.lbl_status.configure(text="这些链接正在下载中，无需重复提交（输入框已保留）")
+                return
+            self.txt_urls.delete("1.0", "end")
+            parts = []
+            if len(added):
+                parts.append(f"新增下载 {len(added)} 个")
+            if overwritten:
+                parts.append(f"覆盖重新下载 {overwritten} 个")
+            if skipped:
+                parts.append(f"跳过重复 {skipped} 个")
+            self.lbl_status.configure(text="开始下载：" + "，".join(parts))
             return
         pending = [t for t in self.manager.tasks
                    if t.state in (TaskState.READY, TaskState.PENDING, TaskState.PAUSED, TaskState.ERROR)]

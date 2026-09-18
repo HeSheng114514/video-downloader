@@ -88,12 +88,40 @@ def selftest() -> int:
     print("\n[5] 分享文案提取")
     text = "7.85 复制打开抖音，看看【某某】的作品 https://v.douyin.com/sLDScR/ 快来看吧！"
     print(f"    提取结果: {extract_urls(text)}")
+    glued = "https://a.com/1https://b.com/2"
+    print(f"    粘连链接: {extract_urls(glued)}")
 
-    print("\n[6] 配置")
+    print("\n[6] 重复视频查重（同一视频的不同链接形式）")
+    from .platforms import video_key
+
+    dup_sets = [
+        ["https://www.bilibili.com/video/BV1GJ411x7h7",
+         "https://www.bilibili.com/video/BV1GJ411x7h7?spm_id_from=333.999",
+         "https://bilibili.com/video/BV1GJ411x7h7/"],
+        ["https://youtu.be/dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"],
+        ["https://www.douyin.com/video/6961737553342991651",
+         "https://www.douyin.com/video/6961737553342991651?modal=1"],
+    ]
+    for group in dup_sets:
+        keys = {video_key(u) for u in group}
+        flag = "✔" if len(keys) == 1 else "✘"
+        if len(keys) != 1:
+            ok = False
+        print(f"    {flag} {len(group)} 个链接 → {len(keys)} 个 key  {sorted(keys)[0][:40]}")
+
+    print("\n[7] 配置")
     cfg = ConfigStore.get()
     print(f"    配置文件: {paths.config_file()}")
     print(f"    下载目录: {cfg.download_dir}")
     print(f"    画质: {cfg.quality}  并发: {cfg.concurrency}  代理: {cfg.proxy or '未设置'}")
+    dup = "覆盖重新下载" if cfg.duplicate_action == "overwrite" else "跳过重复"
+    print(f"    重复视频: {dup}")
+    manual = getattr(cfg, "manual_cookies", None) or {}
+    from . import cookies as _ck
+
+    print(f"    Cookie: 手动填写 {_ck.manual_cookie_summary(manual)}"
+          f" / 文件 {'已设置' if cfg.cookies_file else '未设置'}"
+          f" / 浏览器 {cfg.cookies_from_browser or '未设置'}")
 
     print("\n" + "=" * 62)
     print("  自检结果：" + ("全部通过 ✔" if ok else "存在问题 ✘（详见上文）"))

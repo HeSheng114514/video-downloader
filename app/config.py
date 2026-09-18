@@ -49,6 +49,7 @@ class Config:
     speed_limit: str = ""              # 例如 5M / 800K，空=不限速
     playlist: bool = True              # 允许下载整个合集/列表
     playlist_items: str = ""           # 例如 1-10
+    duplicate_action: str = "overwrite"  # 列表中已有同一视频时：overwrite=覆盖下载 / skip=跳过
     prefer_mp4: bool = True            # 合并/转封装为 mp4
     write_thumbnail: bool = False      # 保存封面图
     embed_thumbnail: bool = False      # 嵌入封面
@@ -109,6 +110,8 @@ class Config:
             cfg.manual_cookies = {}
         else:
             cfg.manual_cookies = {str(k): str(v) for k, v in cfg.manual_cookies.items() if k and v}
+        if cfg.duplicate_action not in ("overwrite", "skip"):
+            cfg.duplicate_action = "overwrite"
         return cfg
 
     def save(self, path: Path | None = None) -> None:

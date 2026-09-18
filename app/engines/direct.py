@@ -24,7 +24,8 @@ def build_target_path(info: MediaInfo, ctx: EngineContext, index: int | None = N
         title = f"{title}_{index:02d}"
     ext = (info.ext or "mp4").lstrip(".")
     path = outdir / f"{title}.{ext}"
-    if ctx.config.keep_original:
+    # 覆盖下载时不加序号，直接替换同名文件
+    if ctx.config.keep_original and not ctx.overwrite:
         path = unique_path(path)
     return path
 

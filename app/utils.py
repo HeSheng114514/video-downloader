@@ -57,16 +57,22 @@ URL_RE = re.compile(r"https?://[^\s\u4e00-\u9fff\"'<>()\[\]{}，。、；：！�
 
 
 def extract_urls(text: str) -> list[str]:
-    """从任意文本（分享文案）中提取所有 http(s) 链接，去重保序。"""
+    """从任意文本（分享文案）中提取所有 http(s) 链接，去重保序。
+
+    会处理「多个链接之间没有空格/换行」的情况（例如连续粘贴导致
+    ``https://a.com/xhttps://b.com/y`` 粘成一条）。
+    """
     if not text:
         return []
     # 分享文案里常有「复制此链接，打开抖音」等中文，URL_RE 已按中文边界切分
     found = URL_RE.findall(text)
     cleaned: list[str] = []
     for u in found:
-        u = u.strip().rstrip(".,;:")
-        if u and u not in cleaned:
-            cleaned.append(u)
+        # 按 http(s):// 再次切分，处理粘连的多个链接
+        for part in re.split(r"(?=https?://)", u):
+            part = part.strip().rstrip(".,;:")
+            if part.startswith("http") and part not in cleaned:
+                cleaned.append(part)
     return cleaned
 
 

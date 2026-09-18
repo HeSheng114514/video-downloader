@@ -86,10 +86,18 @@ class DownloadTask:
     started_at: float = 0.0
     finished_at: float = 0.0
     retries: int = 0
+    overwrite: bool = False      # 明确要求覆盖下载（同名文件将被替换）
 
     # 运行期控制
     cancel_event: object | None = field(default=None, repr=False, compare=False)
     proc: object | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def key(self) -> str:
+        """视频唯一标识，用于查重（同一视频的不同链接形式会得到相同 key）。"""
+        from .platforms import video_key
+
+        return video_key(self.url)
 
     @property
     def display_title(self) -> str:

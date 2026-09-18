@@ -23,6 +23,11 @@ config.json
 *.part
 *.log
 
+# ---- 本地约定与凭据（绝不入库）----
+发布约定.md
+GitHub-Token.txt
+*token*.txt
+
 # ---- Python ----
 __pycache__/
 *.py[cod]

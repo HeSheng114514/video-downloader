@@ -14,7 +14,8 @@
 from __future__ import annotations
 
 from ..config import Config
-from ..platforms import detect_platform, extract_douyin_id, extract_kuaishou_id
+from ..platforms import (detect_platform, extract_bilibili_id, extract_douyin_id,
+                         extract_kuaishou_id, video_key)
 from .base import BaseEngine, EngineContext, EngineError
 from .direct import DirectEngine
 from .douyin import DouyinEngine
@@ -47,10 +48,20 @@ def normalize_url(url: str, client, log=None) -> str:
 
     * 抖音：v.douyin.com/xxx → www.douyin.com/video/{id}
     * 快手：v.kuaishou.com/xxx → www.kuaishou.com/short-video/{id}
+    * B 站：b23.tv/xxx → www.bilibili.com/video/{BV}
 
-    yt-dlp 只认抖音长链，归一化后 yt-dlp 才能接手（配合浏览器 Cookie）。
+    归一化还有一个好处：查重更准确——短链与长链会被识别成同一个视频。
     """
     platform = detect_platform(url)
+    if platform == "bilibili":
+        vid = extract_bilibili_id(url)
+        if not vid:
+            try:
+                vid = extract_bilibili_id(client.resolve_redirect(url, timeout=15))
+            except Exception:
+                vid = None
+        if vid:
+            return f"https://www.bilibili.com/video/{vid}"
     if platform == "douyin":
         vid = extract_douyin_id(url)
         if not vid:

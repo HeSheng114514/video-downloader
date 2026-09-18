@@ -30,6 +30,7 @@ class EngineContext:
     on_meta: Callable[[MediaInfo], None] = lambda m: None
     on_proc: Callable[[object], None] = lambda p: None
     cancel: threading.Event = field(default_factory=threading.Event)
+    overwrite: bool = False      # 覆盖已有同名文件
 
     def cancelled(self) -> bool:
         return self.cancel.is_set()
