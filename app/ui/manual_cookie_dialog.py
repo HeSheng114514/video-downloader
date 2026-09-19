@@ -19,6 +19,7 @@ from tkinter import messagebox, ttk
 from .. import cookies as ck
 from ..config import ConfigStore
 from ..net import shared_client
+from .theme import make_text, palette
 
 # 站点选择项：(显示名, 域名)
 SITE_CHOICES: list[tuple[str, str]] = [
@@ -50,11 +51,13 @@ class ManualCookieDialog(tk.Toplevel):
     def __init__(self, master, on_saved=None) -> None:
         super().__init__(master)
         self.cfg = ConfigStore.get()
+        self.colors = palette(self.cfg.theme)
         self.on_saved = on_saved
         self.title("手动填写 Cookie")
         self.transient(master)
         self.grab_set()
         self.resizable(False, False)
+        self.configure(bg=self.colors["canvas"])
 
         pad = ttk.Frame(self, padding=16)
         pad.pack(fill="both", expand=True)
@@ -80,19 +83,21 @@ class ManualCookieDialog(tk.Toplevel):
 
         # ---------------------------------------------------------- 输入
         ttk.Label(pad, text="粘贴 Cookie 字符串").pack(anchor="w", pady=(12, 4))
-        self.txt = tk.Text(pad, height=6, wrap="word", relief="flat", font=("Consolas", 9),
-                           bg="#ffffff", fg="#111827", highlightthickness=1,
-                           highlightbackground="#e5e7eb", insertbackground="#111827")
+        self.txt = make_text(pad, self.colors, mono=True, height=6, wrap="word")
         self.txt.pack(fill="x")
         self.txt.bind("<KeyRelease>", lambda e: self._preview())
         self.txt.bind("<<Paste>>", lambda e: self.after(60, self._preview))
 
         opt = ttk.Frame(pad)
         opt.pack(fill="x", pady=(8, 0))
-        ttk.Button(opt, text="解析预览", command=self._preview).pack(side="left")
-        ttk.Button(opt, text="校验有效性（联网）", command=self._validate_input).pack(side="left", padx=6)
-        ttk.Button(opt, text="校验已保存", command=self._validate_saved).pack(side="left")
-        ttk.Button(opt, text="清空输入", command=self._clear_input).pack(side="left", padx=6)
+        ttk.Button(opt, text="解析预览", style="Secondary.TButton",
+                   command=self._preview).pack(side="left")
+        ttk.Button(opt, text="校验有效性（联网）", style="Secondary.TButton",
+                   command=self._validate_input).pack(side="left", padx=6)
+        ttk.Button(opt, text="校验已保存", style="Secondary.TButton",
+                   command=self._validate_saved).pack(side="left")
+        ttk.Button(opt, text="清空输入", style="Secondary.TButton",
+                   command=self._clear_input).pack(side="left", padx=6)
         self.lbl_preview = ttk.Label(opt, text="", style="Dim.TLabel")
         self.lbl_preview.pack(side="left", padx=10)
 
@@ -109,14 +114,16 @@ class ManualCookieDialog(tk.Toplevel):
         sb = ttk.Scrollbar(box, orient="vertical", command=self.tree.yview)
         sb.pack(side="left", fill="y")
         self.tree.configure(yscrollcommand=sb.set)
-        ttk.Button(box, text="删除选中", command=self._delete_selected).pack(side="left", padx=(6, 0), anchor="n")
+        ttk.Button(box, text="删除选中", style="Secondary.TButton",
+                   command=self._delete_selected).pack(side="left", padx=(6, 0), anchor="n")
 
         # ---------------------------------------------------------- 底部
         bar = ttk.Frame(pad)
         bar.pack(fill="x", pady=(14, 0))
-        ttk.Button(bar, text="关闭", command=self.destroy).pack(side="right")
-        ttk.Button(bar, text="解析并保存", style="Accent.TButton",
-                   command=self._save).pack(side="right", padx=6)
+        ttk.Button(bar, text="关闭", style="Secondary.TButton",
+                   command=self.destroy).pack(side="right")
+        ttk.Button(bar, text="解析并保存", style="Primary.TButton",
+                   command=self._save).pack(side="right", padx=8)
 
         self._refresh_tree()
         self.update_idletasks()
@@ -139,7 +146,7 @@ class ManualCookieDialog(tk.Toplevel):
     def _preview(self) -> None:
         pairs = self._pairs()
         if not pairs:
-            self.lbl_preview.configure(text="尚未识别到 Cookie", foreground="#6b7280")
+            self.lbl_preview.configure(text="尚未识别到 Cookie", foreground=self.colors["text_mute"])
             return
         platform = ck.guess_platform(pairs.keys())
         names = list(pairs.keys())
@@ -153,7 +160,7 @@ class ManualCookieDialog(tk.Toplevel):
             hit = [n for n in names if n in need]
             hint = f"　识别为 {platform}，含关键 Cookie：{'、'.join(hit)}" if hit else f"　识别为 {platform}，但未见关键 Cookie"
         self.lbl_preview.configure(
-            text=f"识别到 {len(pairs)} 条：{shown}{hint}", foreground="#16a34a")
+            text=f"识别到 {len(pairs)} 条：{shown}{hint}", foreground=self.colors["success"])
 
     def _validate_input(self) -> None:
         """联网校验当前输入框里的 Cookie 是否仍然有效。"""
@@ -177,7 +184,7 @@ class ManualCookieDialog(tk.Toplevel):
         self._run_validity(platform, cookie_str, domain)
 
     def _run_validity(self, platform: str, cookie_str: str, domain: str) -> None:
-        self.lbl_preview.configure(text="正在联网校验 Cookie 有效性…", foreground="#d97706")
+        self.lbl_preview.configure(text="正在联网校验 Cookie 有效性…", foreground=self.colors["warn"])
 
         def work() -> None:
             try:
@@ -185,7 +192,8 @@ class ManualCookieDialog(tk.Toplevel):
                 ok, msg = ck.check_cookie_validity(platform or "", cookie_str, client)
             except Exception as e:
                 ok, msg = None, f"校验出错：{type(e).__name__} {e}"
-            color = "#16a34a" if ok else ("#dc2626" if ok is False else "#6b7280")
+            color = (self.colors["success"] if ok else
+                     (self.colors["error"] if ok is False else self.colors["text_mute"]))
             icon = "✔" if ok else ("✘" if ok is False else "•")
             try:
                 self.after(0, lambda: self.lbl_preview.configure(
@@ -247,7 +255,7 @@ class ManualCookieDialog(tk.Toplevel):
             need = ck.EXPECTED_COOKIES.get(saved_platform, ((), ()))[1]
             miss = [k for k in need if k not in merged]
             msg += f"（{saved_platform} 登录态已就绪）" if not miss else f"，仍缺少 {miss[0]} 等关键 Cookie"
-        self.lbl_preview.configure(text=msg, foreground="#16a34a")
+        self.lbl_preview.configure(text=msg, foreground=self.colors["success"])
         if self.on_saved:
             self.on_saved()
         # 保存后自动联网确认一次登录态是否真的有效

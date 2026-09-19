@@ -29,29 +29,51 @@ class SettingsDialog(tk.Toplevel):
         self.transient(master)
         self.grab_set()
         self.resizable(False, False)
-        self.configure(bg=c["bg"])
+        self.configure(bg=c["canvas"])
 
         nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=12, pady=(12, 6))
+        nb.pack(fill="both", expand=True, padx=14, pady=(14, 6))
 
         self._vars: dict[str, tk.Variable] = {}
         self._tab_download(nb)
         self._tab_network(nb)
         self._tab_advanced(nb)
 
-        bar = ttk.Frame(self, padding=(12, 0, 12, 12))
+        bar = ttk.Frame(self, padding=(14, 0, 14, 14))
         bar.pack(fill="x")
-        ttk.Button(bar, text="恢复默认", command=self._reset).pack(side="left")
-        ttk.Button(bar, text="取消", command=self.destroy).pack(side="right", padx=(6, 0))
-        ttk.Button(bar, text="保存", style="Accent.TButton", command=self._save).pack(side="right")
+        ttk.Button(bar, text="恢复默认", style="Secondary.TButton",
+                   command=self._reset).pack(side="left")
+        ttk.Button(bar, text="取消", style="Secondary.TButton",
+                   command=self.destroy).pack(side="right", padx=(8, 0))
+        ttk.Button(bar, text="保存", style="Primary.TButton",
+                   command=self._save).pack(side="right")
 
         self.update_idletasks()
         try:
             x = master.winfo_rootx() + (master.winfo_width() - self.winfo_width()) // 2
-            y = master.winfo_rooty() + 80
-            self.geometry(f"+{max(0, x)}+{max(0, y)}")
+            y = master.winfo_rooty() + 60
+            # 用「工作区」而不是屏幕尺寸，避免被任务栏遮住
+            wx, wy, wr, wb = self._work_area()
+            w, h = self.winfo_width(), self.winfo_height()
+            x = max(wx, min(x, wr - w - 8))
+            y = max(wy, min(y, wb - h - 8))
+            self.geometry(f"+{x}+{y}")
         except Exception:
             pass
+
+    def _work_area(self) -> tuple[int, int, int, int]:
+        """可用桌面区域（不含任务栏）；取不到时退回屏幕尺寸。"""
+        try:
+            import ctypes
+            import ctypes.wintypes as wt
+
+            r = wt.RECT()
+            SPI_GETWORKAREA = 0x0030
+            if ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(r), 0):
+                return r.left, r.top, r.right, r.bottom
+        except Exception:
+            pass
+        return 0, 0, self.winfo_screenwidth(), self.winfo_screenheight()
 
     # ------------------------------------------------------------ 控件助手
     def _dup_label(self, value: str) -> str:

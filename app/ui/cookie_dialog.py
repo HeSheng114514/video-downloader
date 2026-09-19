@@ -20,6 +20,7 @@ from tkinter import filedialog, messagebox, ttk
 from .. import cookies as ck
 from ..config import ConfigStore
 from ..utils import human_bytes
+from .theme import make_text, palette
 
 EXT_URL = ("https://chromewebstore.google.com/detail/"
            "get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc")
@@ -30,11 +31,14 @@ class CookieDialog(tk.Toplevel):
     def __init__(self, master, platforms: list[str] | None = None) -> None:
         super().__init__(master)
         self.cfg = ConfigStore.get()
+        self.colors = palette(self.cfg.theme)
         self.platforms = platforms or ["bilibili"]
         self.title("Cookie 助手")
         self.transient(master)
         self.grab_set()
         self.resizable(False, False)
+        self.configure(bg=self.colors["canvas"])
+        self.configure(bg=self.colors["canvas"])
 
         pad = ttk.Frame(self, padding=16)
         pad.pack(fill="both", expand=True)
@@ -98,16 +102,17 @@ class CookieDialog(tk.Toplevel):
             self.btn_ff.configure(state="disabled")
 
         # ---------------------------------------------------------- 输出
-        self.out = tk.Text(pad, height=9, wrap="word", relief="flat", font=("Consolas", 9),
-                           bg="#ffffff", fg="#374151", highlightthickness=1,
-                           highlightbackground="#e5e7eb", state="disabled")
+        self.out = make_text(pad, self.colors, mono=True, height=9, wrap="word",
+                             state="disabled", highlightthickness=0,
+                             bg=self.colors["card_alt"], padx=10, pady=8)
         self.out.pack(fill="both", expand=True, pady=(12, 10))
 
         bar = ttk.Frame(pad)
         bar.pack(fill="x")
-        ttk.Button(bar, text="关闭", command=self.destroy).pack(side="right")
-        ttk.Button(bar, text="应用并保存", style="Accent.TButton",
-                   command=self._save).pack(side="right", padx=6)
+        ttk.Button(bar, text="关闭", style="Secondary.TButton",
+                   command=self.destroy).pack(side="right")
+        ttk.Button(bar, text="应用并保存", style="Primary.TButton",
+                   command=self._save).pack(side="right", padx=8)
 
         self._log("提示：方案 1 ~ 3 任选其一即可，方案 1（手动粘贴）不需要安装任何东西。")
         self._log(f"当前配置：{self._current_desc()}")

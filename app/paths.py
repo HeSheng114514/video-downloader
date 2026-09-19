@@ -19,7 +19,7 @@ from pathlib import Path
 
 APP_NAME = "视频下载器"
 APP_ID = "VideoDownloader"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.2.0"
 ORG_NAME = "DSH"
 
 

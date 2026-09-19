@@ -119,20 +119,24 @@ class DownloadTask:
         from .utils import human_bytes, human_eta, human_speed, make_progress_bar, shorten
 
         plat = PLATFORMS.get(self.platform, PLATFORMS["other"])
-        prog = self.progress
+        # 进度列：进行中显示细进度条，其余用简洁文字，避免大片色块
         if self.state == TaskState.DONE:
-            bar = make_progress_bar(100)
-        elif self.state in (TaskState.PENDING, TaskState.PARSING):
-            bar = "—"
+            prog = "✔  100%"
+        elif self.state in (TaskState.PENDING, TaskState.PARSING, TaskState.ERROR):
+            prog = "—"
+        elif self.state == TaskState.READY:
+            prog = "待下载"
+        elif self.state == TaskState.CANCELED:
+            prog = "已取消"
         else:
-            bar = make_progress_bar(prog)
+            prog = make_progress_bar(self.progress, width=10)
         size = human_bytes(self.total or (self.info.filesize if self.info else 0))
         got = human_bytes(self.downloaded) if self.downloaded else "-"
         return {
             "id": str(self.id),
             "platform": plat["short"],
             "title": shorten(self.display_title, 70),
-            "progress": bar,
+            "progress": prog,
             "speed": human_speed(self.speed) if self.state == TaskState.DOWNLOADING else "-",
             "size": f"{got} / {size}" if self.downloaded else size,
             "eta": human_eta(self.eta) if self.state == TaskState.DOWNLOADING else "-",

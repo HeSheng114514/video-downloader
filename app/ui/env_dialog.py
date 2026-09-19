@@ -15,16 +15,19 @@ from typing import Callable
 from .. import bootstrap, paths
 from ..config import ConfigStore
 from ..utils import human_bytes
+from .theme import make_text, palette
 
 
 class EnvDialog(tk.Toplevel):
     def __init__(self, master) -> None:
         super().__init__(master)
         self.cfg = ConfigStore.get()
+        self.colors = palette(self.cfg.theme)
         self.title("运行环境")
         self.transient(master)
         self.grab_set()
         self.resizable(False, False)
+        self.configure(bg=self.colors["canvas"])
 
         pad = ttk.Frame(self, padding=16)
         pad.pack(fill="both", expand=True)
@@ -53,19 +56,23 @@ class EnvDialog(tk.Toplevel):
         self.lbl_progress = ttk.Label(pad, text="", style="Dim.TLabel")
         self.lbl_progress.pack(anchor="w")
 
-        self.log_box = tk.Text(pad, height=8, wrap="word", relief="flat", font=("Consolas", 9),
-                               bg="#ffffff", fg="#4b5563", highlightthickness=1,
-                               highlightbackground="#e5e7eb", state="disabled")
+        self.log_box = make_text(pad, self.colors, mono=True, height=8, wrap="word",
+                                 state="disabled", highlightthickness=0,
+                                 bg=self.colors["card_alt"], padx=10, pady=7)
         self.log_box.pack(fill="both", expand=True, pady=(8, 10))
 
         bar = ttk.Frame(pad)
         bar.pack(fill="x")
-        ttk.Button(bar, text="关闭", command=self.destroy).pack(side="right")
-        self.btn_update = ttk.Button(bar, text="更新 yt-dlp", command=self._update)
+        ttk.Button(bar, text="关闭", style="Secondary.TButton",
+                   command=self.destroy).pack(side="right")
+        self.btn_update = ttk.Button(bar, text="更新 yt-dlp", style="Secondary.TButton",
+                                     command=self._update)
         self.btn_update.pack(side="right", padx=6)
-        self.btn_install = ttk.Button(bar, text="一键安装 / 修复", style="Accent.TButton", command=self._install)
+        self.btn_install = ttk.Button(bar, text="一键安装 / 修复", style="Primary.TButton",
+                                      command=self._install)
         self.btn_install.pack(side="right", padx=6)
-        ttk.Button(bar, text="重新检测", command=self._refresh).pack(side="left")
+        ttk.Button(bar, text="重新检测", style="Secondary.TButton",
+                   command=self._refresh).pack(side="left")
 
         self._refresh()
 

@@ -22,7 +22,8 @@ from ..models import DownloadTask, TaskState
 from ..platforms import SUPPORTED_HINT
 from ..utils import extract_urls, open_folder
 from .settings import SettingsDialog
-from .theme import apply_theme
+from .theme import (FONT_FAMILY, MONO_FAMILY, apply_theme, make_card,
+                    make_divider, make_text)
 
 APP_TITLE = f"视频下载器 v{paths.APP_VERSION}"
 
@@ -34,12 +35,13 @@ class MainWindow(tk.Tk):
         self.events: queue.Queue = queue.Queue()
         self.rows: dict[int, str] = {}
         self.colors = apply_theme(self, self.cfg.theme)
+        self._applied_theme = self.cfg.theme
         self.manager = TaskManager(self._post_event, self.cfg)
 
         self.title(APP_TITLE)
-        geometry = self.cfg.window_geometry or "1180x760"
+        geometry = self.cfg.window_geometry or "1240x820"
         self.geometry(geometry)
-        self.minsize(980, 640)
+        self.minsize(1040, 680)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._last_clip = ""
@@ -64,133 +66,232 @@ class MainWindow(tk.Tk):
     # ---------------------------------------------------------- 顶部
     def _build_header(self) -> None:
         c = self.colors
-        bar = ttk.Frame(self, style="Panel.TFrame", padding=(14, 10))
+        bar = ttk.Frame(self, style="Header.TFrame", padding=(18, 11, 14, 11))
         bar.grid(row=0, column=0, sticky="ew")
         bar.columnconfigure(1, weight=1)
 
-        left = ttk.Frame(bar, style="Panel.TFrame")
+        left = ttk.Frame(bar, style="Header.TFrame")
         left.grid(row=0, column=0, sticky="w")
-        ttk.Label(left, text="🎬 视频下载器", style="Title.TLabel").pack(side="left")
-        ttk.Label(left, text=f"   {SUPPORTED_HINT}", style="PanelDim.TLabel").pack(side="left", padx=(6, 0))
+        ttk.Label(left, text="🎬 视频下载器", style="HeaderBrand.TLabel").pack(side="left")
+        ttk.Label(left, text=f" v{paths.APP_VERSION} ", style="HeaderChip.TLabel").pack(
+            side="left", padx=(9, 0))
+        ttk.Label(left, text=SUPPORTED_HINT, style="HeaderHint.TLabel").pack(
+            side="left", padx=(11, 0))
 
-        right = ttk.Frame(bar, style="Panel.TFrame")
+        right = ttk.Frame(bar, style="Header.TFrame")
         right.grid(row=0, column=2, sticky="e")
-        self.btn_env = ttk.Button(right, text="⚙ 运行环境", command=self._open_env_dialog)
-        self.btn_env.pack(side="right", padx=(6, 0))
-        ttk.Button(right, text="🛠 设置", command=self._open_settings).pack(side="right", padx=(6, 0))
+        self.btn_env = ttk.Button(right, text="⚙ 运行环境", style="Tool.TButton",
+                                  command=self._open_env_dialog)
+        self.btn_env.pack(side="right")
+        self.btn_theme = ttk.Button(right, text=self._theme_icon(), style="Tool.TButton",
+                                    command=self._toggle_theme)
+        self.btn_theme.pack(side="right", padx=(0, 2))
+        ttk.Button(right, text="🛠 设置", style="Tool.TButton",
+                   command=self._open_settings).pack(side="right", padx=(0, 2))
 
-        ttk.Separator(self, orient="horizontal").grid(row=0, column=0, sticky="sew")
+        tk.Frame(self, height=2, bg=c["accent"], bd=0,
+                 highlightthickness=0).grid(row=0, column=0, sticky="sew")
+
+    def _theme_icon(self) -> str:
+        return "☀ 浅色" if self.cfg.theme == "dark" else "🌙 深色"
+
+    def _toggle_theme(self) -> None:
+        self.cfg.theme = "light" if self.cfg.theme == "dark" else "dark"
+        ConfigStore.save()
+        self._on_settings_saved()
+
+    def _rebuild_ui(self) -> None:
+        """按当前主题重建界面（保留输入框内容、任务列表与日志）。
+
+        卡片与文本框是 classic tk 控件，仅改 ttk 样式无法让它们换色，
+        因此换主题时整体重建一次。
+        """
+        text = ""
+        log = ""
+        try:
+            text = self.txt_urls.get("1.0", "end").rstrip("\n")
+        except Exception:
+            pass
+        try:
+            log = self.log_box.get("1.0", "end").rstrip("\n")
+        except Exception:
+            pass
+
+        for child in list(self.winfo_children()):
+            try:
+                child.destroy()
+            except Exception:
+                pass
+        self.rows.clear()
+
+        self.colors = apply_theme(self, self.cfg.theme)
+        self._applied_theme = self.cfg.theme
+        self._build_ui()
+
+        if text:
+            self.txt_urls.insert("1.0", text)
+        for task in self.manager.tasks:
+            self._add_row(task)
+            self._update_row(task)
+        self._update_count()
+        if log:
+            self.log_box.configure(state="normal")
+            self.log_box.insert("1.0", log + "\n")
+            self.log_box.see("end")
+            self.log_box.configure(state="disabled")
+        self._refresh_env_dot()
 
     # ---------------------------------------------------------- 输入区
     def _build_input(self) -> None:
         c = self.colors
-        wrap = ttk.Frame(self, padding=(14, 12, 14, 6))
+        wrap = ttk.Frame(self, style="Canvas.TFrame", padding=(16, 14, 16, 7))
         wrap.grid(row=1, column=0, sticky="ew")
-        wrap.columnconfigure(0, weight=1)
-        wrap.columnconfigure(1, weight=0)
+        wrap.columnconfigure(0, weight=3, minsize=420)
+        wrap.columnconfigure(1, weight=2, minsize=300)
 
-        # 左：链接输入
-        left = ttk.Labelframe(wrap, text=" 视频链接（每行一个，支持粘贴分享文案） ", padding=(10, 8))
-        left.grid(row=0, column=0, sticky="nsew")
-        left.columnconfigure(0, weight=1)
-        left.rowconfigure(0, weight=1)
+        # ---------- 左：链接输入卡片 ----------
+        card = make_card(wrap, c)
+        card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        card.columnconfigure(0, weight=1)
+        card.rowconfigure(1, weight=1)
 
-        self.txt_urls = tk.Text(left, height=4, wrap="none", relief="flat", font=("Consolas", 10),
-                                bg=c["input_bg"], fg=c["text"], insertbackground=c["text"],
-                                highlightthickness=1, highlightbackground=c["border"],
-                                highlightcolor=c["accent"], undo=True)
+        head = ttk.Frame(card, style="Card.TFrame")
+        head.grid(row=0, column=0, sticky="ew", padx=14, pady=(11, 0))
+        ttk.Label(head, text="视频链接", style="CardTitle.TLabel").pack(side="left")
+        ttk.Label(head, text="每行一个，可直接粘贴整段分享文案",
+                  style="CardHint.TLabel").pack(side="left", padx=(9, 0))
+        ttk.Label(head, text="Ctrl+Enter 解析", style="CardHint.TLabel").pack(side="right")
+
+        box = ttk.Frame(card, style="Card.TFrame")
+        box.grid(row=1, column=0, sticky="nsew", padx=14, pady=(9, 0))
+        box.columnconfigure(0, weight=1)
+        box.rowconfigure(0, weight=1)
+
+        self.txt_urls = make_text(box, c, mono=True, height=4, wrap="none")
         self.txt_urls.grid(row=0, column=0, sticky="nsew")
         self.txt_urls.bind("<Control-Return>", lambda e: self._on_parse())
-        sb = ttk.Scrollbar(left, orient="vertical", command=self.txt_urls.yview)
-        sb.grid(row=0, column=1, sticky="ns")
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.txt_urls.yview)
+        sb.grid(row=0, column=1, sticky="ns", padx=(4, 0))
         self.txt_urls.configure(yscrollcommand=sb.set)
 
-        btnrow = ttk.Frame(left)
-        btnrow.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        ttk.Button(btnrow, text="📋 粘贴", command=self._paste).pack(side="left")
-        ttk.Button(btnrow, text="🗑 清空", command=lambda: self.txt_urls.delete("1.0", "end")).pack(side="left", padx=4)
-        ttk.Button(btnrow, text="🔍 解析", command=self._on_parse).pack(side="left", padx=4)
-        ttk.Button(btnrow, text="⬇ 开始下载", style="Accent.TButton",
-                   command=self._on_download).pack(side="left", padx=(12, 4))
-        ttk.Label(btnrow, text="Ctrl+Enter 快速解析", style="Dim.TLabel").pack(side="right")
+        btns = ttk.Frame(card, style="Card.TFrame")
+        btns.grid(row=2, column=0, sticky="ew", padx=14, pady=(10, 12))
+        ttk.Button(btns, text="📋 粘贴", style="Secondary.TButton",
+                   command=self._paste).pack(side="left")
+        ttk.Button(btns, text="🗑 清空", style="Secondary.TButton",
+                   command=lambda: self.txt_urls.delete("1.0", "end")).pack(side="left", padx=6)
+        ttk.Button(btns, text="🔍 解析", style="Secondary.TButton",
+                   command=self._on_parse).pack(side="left")
+        ttk.Button(btns, text="⬇  开始下载", style="Primary.TButton",
+                   command=self._on_download).pack(side="right")
 
-        # 右：常用选项
-        right = ttk.Labelframe(wrap, text=" 下载选项 ", padding=(10, 8))
-        right.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+        # ---------- 右：下载选项卡片 ----------
+        card2 = make_card(wrap, c)
+        card2.grid(row=0, column=1, sticky="nsew")
+        card2.columnconfigure(0, weight=1)
 
-        ttk.Label(right, text="画质").grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Label(card2, text="下载选项", style="CardTitle.TLabel").grid(
+            row=0, column=0, sticky="w", padx=14, pady=(11, 8))
+
+        body = ttk.Frame(card2, style="Card.TFrame")
+        body.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 12))
+        body.columnconfigure(0, minsize=54)
+        body.columnconfigure(1, weight=1)
+
+        ttk.Label(body, text="画质", style="CardDim.TLabel").grid(
+            row=0, column=0, sticky="w", pady=4)
         self.var_quality = tk.StringVar(value=QUALITY_LABELS.get(self.cfg.quality, "最佳画质（自动）"))
-        self.cmb_quality = ttk.Combobox(right, textvariable=self.var_quality, state="readonly", width=20,
+        self.cmb_quality = ttk.Combobox(body, textvariable=self.var_quality, state="readonly",
                                         values=[label for _, label, _ in QUALITY_PRESETS])
-        self.cmb_quality.grid(row=0, column=1, sticky="ew", pady=3)
+        self.cmb_quality.grid(row=0, column=1, sticky="ew", pady=4)
         self.cmb_quality.bind("<<ComboboxSelected>>", self._on_quality_change)
 
         self.var_audio = tk.BooleanVar(value=self.cfg.audio_only)
-        ttk.Checkbutton(right, text="仅音频（提取 MP3）", variable=self.var_audio,
-                        command=self._on_audio_toggle).grid(row=1, column=0, columnspan=2, sticky="w", pady=3)
+        ttk.Checkbutton(body, text="仅音频（提取 MP3）", variable=self.var_audio,
+                        style="Card.TCheckbutton", command=self._on_audio_toggle).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(2, 4))
 
-        ttk.Label(right, text="保存到").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Label(body, text="保存到", style="CardDim.TLabel").grid(
+            row=2, column=0, sticky="w", pady=4)
+        dirbox = ttk.Frame(body, style="Card.TFrame")
+        dirbox.grid(row=2, column=1, sticky="ew", pady=4)
+        dirbox.columnconfigure(0, weight=1)
         self.var_dir = tk.StringVar(value=self.cfg.download_dir)
-        ent = ttk.Entry(right, textvariable=self.var_dir, width=26)
-        ent.grid(row=2, column=1, sticky="ew", pady=3)
+        ent = ttk.Entry(dirbox, textvariable=self.var_dir)
+        ent.grid(row=0, column=0, sticky="ew")
         ent.bind("<FocusOut>", lambda e: self._apply_dir())
         ent.bind("<Return>", lambda e: self._apply_dir())
-        ttk.Button(right, text="浏览…", command=self._choose_dir).grid(row=3, column=1, sticky="e", pady=(0, 4))
+        ttk.Button(dirbox, text="浏览", style="Secondary.TButton",
+                   command=self._choose_dir).grid(row=0, column=1, padx=(6, 0))
 
-        row = ttk.Frame(right)
-        row.grid(row=4, column=0, columnspan=2, sticky="ew", pady=3)
-        ttk.Label(row, text="并发").pack(side="left")
+        row = ttk.Frame(body, style="Card.TFrame")
+        row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=4)
+        ttk.Label(row, text="并发", style="CardDim.TLabel").pack(side="left")
         self.var_conc = tk.IntVar(value=self.cfg.concurrency)
-        sp = ttk.Spinbox(row, from_=1, to=10, width=4, textvariable=self.var_conc, command=self._apply_concurrency)
-        sp.pack(side="left", padx=(6, 12))
+        ttk.Spinbox(row, from_=1, to=10, width=4, textvariable=self.var_conc,
+                    command=self._apply_concurrency).pack(side="left", padx=(8, 16))
+        ttk.Label(row, text="代理", style="CardDim.TLabel").pack(side="left")
         self.var_proxy = tk.StringVar(value=self.cfg.proxy)
-        ttk.Label(row, text="代理").pack(side="left")
-        pe = ttk.Entry(row, textvariable=self.var_proxy, width=16)
-        pe.pack(side="left", padx=(6, 0), fill="x", expand=True)
+        pe = ttk.Entry(row, textvariable=self.var_proxy)
+        pe.pack(side="left", padx=(8, 0), fill="x", expand=True)
         pe.bind("<FocusOut>", lambda e: self._apply_proxy())
         pe.bind("<Return>", lambda e: self._apply_proxy())
 
-        ttk.Label(right, text="YouTube/TikTok 等站点需要代理，如 http://127.0.0.1:7890",
-                  style="Dim.TLabel", wraplength=260, justify="left").grid(
-            row=5, column=0, columnspan=2, sticky="w", pady=(2, 0))
-        right.columnconfigure(1, weight=1)
+        ttk.Label(body, text="YouTube / TikTok 等站点需要代理，如 http://127.0.0.1:7890",
+                  style="CardHint.TLabel", wraplength=290, justify="left").grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=(7, 0))
 
     # ---------------------------------------------------------- 任务表
     def _build_tasks(self) -> None:
         c = self.colors
-        frame = ttk.Frame(self, padding=(14, 0, 14, 6))
-        frame.grid(row=2, column=0, sticky="nsew")
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(1, weight=1)
+        wrap = ttk.Frame(self, style="Canvas.TFrame", padding=(16, 0, 16, 7))
+        wrap.grid(row=2, column=0, sticky="nsew")
+        wrap.columnconfigure(0, weight=1)
+        wrap.rowconfigure(0, weight=1)
 
-        bar = ttk.Frame(frame)
-        bar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ttk.Label(bar, text="任务列表", style="Bold.TLabel").pack(side="left")
-        self.lbl_count = ttk.Label(bar, text="共 0 个任务", style="Dim.TLabel")
-        self.lbl_count.pack(side="left", padx=8)
+        card = make_card(wrap, c)
+        card.grid(row=0, column=0, sticky="nsew")
+        card.columnconfigure(0, weight=1)
+        card.rowconfigure(1, weight=1)
+
+        head = ttk.Frame(card, style="Card.TFrame")
+        head.grid(row=0, column=0, sticky="ew", padx=14, pady=(11, 7))
+        ttk.Label(head, text="任务列表", style="CardTitle.TLabel").pack(side="left")
+        self.lbl_count = ttk.Label(head, text="共 0 个任务", style="CardHint.TLabel")
+        self.lbl_count.pack(side="left", padx=(9, 0))
 
         for text, cmd in (("清空已完成", self._clear_finished),
                           ("全部取消", self._cancel_all),
                           ("全部重试", self._retry_all),
                           ("打开目录", lambda: open_folder(self.cfg.download_dir))):
-            ttk.Button(bar, text=text, style="Ghost.TButton", command=cmd).pack(side="right", padx=3)
+            ttk.Button(head, text=text, style="Ghost.TButton", command=cmd).pack(
+                side="right", padx=3)
+
+        body = ttk.Frame(card, style="Card.TFrame")
+        body.grid(row=1, column=0, sticky="nsew", padx=(14, 8), pady=(0, 12))
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
 
         cols = ("id", "platform", "title", "progress", "speed", "size", "eta", "state")
         heads = {"id": "#", "platform": "平台", "title": "标题", "progress": "进度",
                  "speed": "速度", "size": "大小", "eta": "剩余", "state": "状态"}
-        widths = {"id": 40, "platform": 62, "title": 380, "progress": 150,
-                  "speed": 92, "size": 130, "eta": 66, "state": 150}
+        widths = {"id": 46, "platform": 74, "title": 340, "progress": 176,
+                  "speed": 100, "size": 136, "eta": 74, "state": 156}
 
-        self.tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="extended")
+        self.tree = ttk.Treeview(body, columns=cols, show="headings", selectmode="extended")
         for col in cols:
             self.tree.heading(col, text=heads[col])
-            self.tree.column(col, width=widths[col], anchor="w" if col in ("title", "state", "path") else "center",
+            self.tree.column(col, width=widths[col], minwidth=46,
+                             anchor="w" if col == "title" else "center",
                              stretch=(col == "title"))
-        self.tree.grid(row=1, column=0, sticky="nsew")
-        vs = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
-        vs.grid(row=1, column=1, sticky="ns")
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vs = ttk.Scrollbar(body, orient="vertical", command=self.tree.yview)
+        vs.grid(row=0, column=1, sticky="ns", padx=(2, 0))
         self.tree.configure(yscrollcommand=vs.set)
 
+        # 斑马纹 + 状态着色（状态标签只设前景色，条纹标签只设背景色，互不冲突）
+        self.tree.tag_configure("stripe_even", background=c["card"])
+        self.tree.tag_configure("stripe_odd", background=c["stripe"])
         self.tree.tag_configure("done", foreground=c["success"])
         self.tree.tag_configure("error", foreground=c["error"])
         self.tree.tag_configure("active", foreground=c["info"])
@@ -215,38 +316,51 @@ class MainWindow(tk.Tk):
     # ---------------------------------------------------------- 日志
     def _build_log(self) -> None:
         c = self.colors
-        self.log_wrap = ttk.Frame(self, padding=(14, 0, 14, 6))
+        self.log_wrap = ttk.Frame(self, style="Canvas.TFrame", padding=(16, 0, 16, 9))
         self.log_wrap.grid(row=3, column=0, sticky="ew")
         self.log_wrap.columnconfigure(0, weight=1)
 
-        head = ttk.Frame(self.log_wrap)
-        head.grid(row=0, column=0, sticky="ew")
+        self.log_card = make_card(self.log_wrap, c)
+        self.log_card.grid(row=0, column=0, sticky="ew")
+        self.log_card.columnconfigure(0, weight=1)
+
+        head = ttk.Frame(self.log_card, style="Card.TFrame")
+        head.grid(row=0, column=0, sticky="ew", padx=14, pady=(9, 0))
         self.var_show_log = tk.BooleanVar(value=self.cfg.show_log)
-        ttk.Checkbutton(head, text="显示运行日志", variable=self.var_show_log,
-                        command=self._toggle_log).pack(side="left")
-        ttk.Button(head, text="清空日志", style="Ghost.TButton",
+        ttk.Checkbutton(head, text="运行日志", variable=self.var_show_log,
+                        style="Card.TCheckbutton", command=self._toggle_log).pack(side="left")
+        ttk.Label(head, text="解析与下载的详细过程", style="CardHint.TLabel").pack(
+            side="left", padx=(9, 0))
+        ttk.Button(head, text="清空", style="Ghost.TButton",
                    command=lambda: self._clear_log()).pack(side="right")
 
-        self.log_box = tk.Text(self.log_wrap, height=7, wrap="word", relief="flat",
-                               font=("Consolas", 9), bg=c["panel"], fg=c["text_dim"],
-                               highlightthickness=1, highlightbackground=c["border"], state="disabled")
-        self.log_box.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        self.log_box = make_text(self.log_card, c, mono=True, height=5, wrap="word",
+                                 state="disabled", highlightthickness=0, bg=c["card_alt"],
+                                 padx=10, pady=7)
+        self.log_box.grid(row=1, column=0, sticky="ew", padx=14, pady=(7, 12))
         for tag, key in (("info", "text_dim"), ("success", "success"),
                          ("warn", "warn"), ("error", "error")):
             self.log_box.tag_configure(tag, foreground=c[key])
         if not self.cfg.show_log:
-            self.log_box.grid_remove()
+            self.log_card.grid_remove()
 
     # ---------------------------------------------------------- 状态栏
     def _build_status(self) -> None:
         c = self.colors
-        bar = ttk.Frame(self, style="Panel.TFrame", padding=(12, 5))
+        bar = ttk.Frame(self, style="StatusBar.TFrame", padding=(16, 7))
         bar.grid(row=4, column=0, sticky="ew")
-        bar.columnconfigure(0, weight=1)
+        bar.columnconfigure(1, weight=1)
+
+        self.lbl_dot = tk.Label(bar, text="●", bg=c["card"], fg=c["success"],
+                                font=(FONT_FAMILY, 9), bd=0)
+        self.lbl_dot.grid(row=0, column=0, sticky="w")
         self.lbl_status = ttk.Label(bar, text="就绪", style="Status.TLabel")
-        self.lbl_status.grid(row=0, column=0, sticky="w")
+        self.lbl_status.grid(row=0, column=1, sticky="w", padx=(7, 0))
         self.lbl_env = ttk.Label(bar, text="正在检测运行环境…", style="Status.TLabel")
-        self.lbl_env.grid(row=0, column=1, sticky="e")
+        self.lbl_env.grid(row=0, column=2, sticky="e")
+
+        tk.Frame(self, height=1, bg=c["border"], bd=0,
+                 highlightthickness=0).grid(row=4, column=0, sticky="new")
 
     # ================================================================ 事件
     def _post_event(self, kind: str, payload: dict) -> None:
@@ -300,6 +414,19 @@ class MainWindow(tk.Tk):
             self._append_log(payload["message"], payload.get("level", "info"))
         elif kind == "env":
             self.lbl_env.configure(text=payload.get("message", ""))
+            self._refresh_env_dot()
+
+    def _refresh_env_dot(self) -> None:
+        """状态栏的小圆点：绿=就绪，红=缺依赖。"""
+        txt = self.lbl_env.cget("text")
+        try:
+            good = ("✔" in txt) and ("yt-dlp" in txt)
+            bad = ("未安装" in txt) or ("✘" in txt)
+            color = self.colors["error"] if (bad and not good) else (
+                self.colors["success"] if good else self.colors["text_mute"])
+            self.lbl_dot.configure(fg=color)
+        except Exception:
+            pass
 
     # ---------------------------------------------------------- 行操作
     def _add_row(self, task: DownloadTask) -> None:
@@ -308,6 +435,11 @@ class MainWindow(tk.Tk):
                                                    row["progress"], row["speed"], row["size"],
                                                    row["eta"], row["state"]))
         self.rows[task.id] = item
+        try:
+            stripe = "stripe_odd" if self.tree.index(item) % 2 else "stripe_even"
+            self.tree.item(item, tags=[stripe])
+        except Exception:
+            pass
         self._update_count()
         self.tree.see(item)
 
@@ -321,13 +453,19 @@ class MainWindow(tk.Tk):
                                      row["speed"], row["size"], row["eta"], row["state"]))
         tags = []
         if task.state == TaskState.DONE:
-            tags = ["done"]
+            tags.append("done")
         elif task.state == TaskState.ERROR:
-            tags = ["error"]
+            tags.append("error")
         elif task.state == TaskState.PAUSED:
-            tags = ["paused"]
+            tags.append("paused")
         elif task.state.is_active:
-            tags = ["active"]
+            tags.append("active")
+        # 斑马纹（只设背景，与状态标签的前景色互不冲突）
+        try:
+            stripe = "stripe_odd" if self.tree.index(item) % 2 else "stripe_even"
+        except Exception:
+            stripe = "stripe_even"
+        tags.append(stripe)
         self.tree.item(item, tags=tags)
 
     def _update_count(self) -> None:
@@ -539,9 +677,9 @@ class MainWindow(tk.Tk):
     def _toggle_log(self) -> None:
         self.cfg.show_log = bool(self.var_show_log.get())
         if self.cfg.show_log:
-            self.log_box.grid()
+            self.log_card.grid()
         else:
-            self.log_box.grid_remove()
+            self.log_card.grid_remove()
         ConfigStore.save()
 
     def _clear_log(self) -> None:
@@ -630,7 +768,13 @@ class MainWindow(tk.Tk):
 
     def _on_settings_saved(self) -> None:
         self.cfg = ConfigStore.get()
-        apply_theme(self, self.cfg.theme)
+        # 换主题需要重建界面（卡片/文本框是 classic tk 控件，改 ttk 样式不会重绘它们）
+        if getattr(self, "_applied_theme", self.cfg.theme) != self.cfg.theme:
+            self._rebuild_ui()
+        else:
+            self.colors = apply_theme(self, self.cfg.theme)
+            if hasattr(self, "btn_theme"):
+                self.btn_theme.configure(text=self._theme_icon())
         self.var_quality.set(QUALITY_LABELS.get(self.cfg.quality, "最佳画质（自动）"))
         self.var_audio.set(self.cfg.audio_only)
         self.var_dir.set(self.cfg.download_dir)
